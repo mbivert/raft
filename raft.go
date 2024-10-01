@@ -1,3 +1,5 @@
+package main
+
 import (
 	"sync"
 	"time"
@@ -32,21 +34,27 @@ type Raft struct {
 	log []*LogEntry
 }
 
-func NewRaft(c *Config, me int) *Graft {
+// NOTE: The start channel is because we sometimes don't want
+// to really start the raft, e.g. while testing individual RPC
+// requests.
+func NewRaft(c *Config, me int, start <-chan struct{}) *Raft {
 	var r Raft
 
 	r.Mutex = &sync.Mutex{}
 	r.Config = c
 
 	r.currentTerm = 0
-	r.State = Follower
+	r.state = Follower
 	r.me = me
 
 	r.stopped = make(chan struct{})
 
-	go r.runElectionTimer()
+	go func() {
+		<-start
+		r.runElectionTimer()
+	}()
 
-	return &g
+	return &r
 }
 
 type State int
@@ -60,7 +68,7 @@ const (
 )
 
 func (r *Raft) forEachPeer(f func(int)) {
-	for _, peer := range r.Peers {
+	for peer := range r.Peers {
 		if peer != r.me {
 			f(peer)
 		}
@@ -82,7 +90,7 @@ func (r *Raft) toCandidate() {
 
 	r.currentTerm++
 
-	r.requestVotes(g.currentTerm)
+	r.requestVotes(r.currentTerm)
 }
 
 func (r *Raft) toFollower(newTerm int) {
@@ -118,11 +126,14 @@ func (r *Raft) sendHeartbeats(startTerm int) {
 	}
 }
 
-func (r *Raft) requestVote(startTerm int, peer int) {
+func (r *Raft) requestVote(term int, peer int) {
 }
 
-func (r *Raft) requestVotes(startTerm int) {
+func (r *Raft) requestVotes(term int) {
 }
 
 func (r *Raft) runElectionTimer() {
+}
+
+func (r *Raft) sendHeartBeat(term int, peer int) {
 }

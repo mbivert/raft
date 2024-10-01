@@ -24,7 +24,23 @@ type RequestVoteReply struct {
 }
 
 func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	r.Lock()
+	defer r.Unlock()
+
+	if args.Term < r.currentTerm {
+		reply.Term = r.currentTerm
+		reply.Success = false
+		return
+	}
 }
 
 func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	r.Lock()
+	defer r.Unlock()
+
+	if args.Term < r.currentTerm {
+		reply.Term = r.currentTerm
+		reply.VoteGranted = false
+		return
+	}
 }
