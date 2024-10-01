@@ -21,13 +21,16 @@ type LogEntry struct {
 	Term int
 }
 
+const nullVotedFor = -1
+
 type Raft struct {
 	*sync.Mutex
 	*Config
 
-	currentTerm int   // current term
-	state       State // current state
 	me          int   // Raft.Confir.Peers[] id; command line argument
+	state       State // current state
+	currentTerm int   // current term
+	votedFor    int
 
 	stopped chan struct{} // closed when stopped
 
@@ -43,9 +46,10 @@ func NewRaft(c *Config, me int, start <-chan struct{}) *Raft {
 	r.Mutex = &sync.Mutex{}
 	r.Config = c
 
-	r.currentTerm = 0
-	r.state = Follower
 	r.me = me
+	r.state = Follower
+	r.currentTerm = 0
+	r.votedFor = nullVotedFor
 
 	r.stopped = make(chan struct{})
 
@@ -59,7 +63,7 @@ func NewRaft(c *Config, me int, start <-chan struct{}) *Raft {
 
 type State int
 
-//go:generate go run golanr.org/x/tools/cmd/stringer -type State -linecomment graft.go
+//go:generate go run golang.org/x/tools/cmd/stringer -type State -linecomment raft.go
 const (
 	Down      State = iota // down
 	Follower               // follower
@@ -78,22 +82,24 @@ func (r *Raft) forEachPeer(f func(int)) {
 // toLeader(), toCandidate() and toFollower() encode
 // (raft) state changes
 
+// assumes we're locked
 func (r *Raft) toLeader() {
 	if r.state != Candidate {
 		panic("assert")
 	}
 }
 
+// assumes we're locked
 func (r *Raft) toCandidate() {
-	r.Lock()
-	defer r.Unlock()
-
 	r.currentTerm++
-
 	r.requestVotes(r.currentTerm)
 }
 
-func (r *Raft) toFollower(newTerm int) {
+// assumes we're locked
+func (r *Raft) toFollower(term int) {
+	r.state = Follower
+	r.currentTerm = term
+	r.votedFor = -1
 }
 
 // sendHeartbeat(), sendHeartbeats(), requestVote(), requestVotes()
