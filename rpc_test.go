@@ -1,5 +1,5 @@
 /*
- * Test individual RPCs
+ * Test individual RPCs.
  */
 package main
 
@@ -9,9 +9,8 @@ import (
 	"github.com/mbivert/ftests"
 )
 
-// tAppendEntries & tRequestVote wraps calling the RPCs
-// so as to return the potentially updated Raft object alongside
-// the result (*Reply) of the call.
+// wrappers to ease tests (in particular, we want to check
+// Raft objects's states is properly updated)
 func tAppendEntries(r *Raft, args *AppendEntriesArgs) (*AppendEntriesReply, *Raft) {
 	var reply AppendEntriesReply
 	r.AppendEntries(args, &reply)
@@ -26,7 +25,7 @@ func tRequestVote(r *Raft, args *RequestVoteArgs) (*RequestVoteReply, *Raft) {
 
 // heartbeat <=> no log entries
 func TestAppendEntriesHeartbeat(t *testing.T) {
-	r := NewRaft(nil, 0, make(chan struct{}))
+	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan struct{}))
 	r.currentTerm = 1
 	r.votedFor = 42
 
@@ -65,9 +64,11 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					Success: true,
 				},
 				&Raft{
-					Mutex:  r.Mutex,
-					Config: r.Config,
-					me:     r.me,
+					Mutex:    r.Mutex,
+					Config:   r.Config,
+					me:       r.me,
+					cpeers:   r.cpeers,
+					listener: r.listener,
 					// Candidate → Follower
 					state: Follower,
 					// voted for the requester
@@ -84,7 +85,7 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 }
 
 func TestRequestVoteFromLowerTerm(t *testing.T) {
-	r := NewRaft(nil, 0, make(chan struct{}))
+	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan struct{}))
 
 	rst := func(state State) {
 		r.state = state
@@ -119,7 +120,7 @@ func TestRequestVoteFromLowerTerm(t *testing.T) {
 }
 
 func TestRequestVoteFromHigherTerm(t *testing.T) {
-	r := NewRaft(nil, 0, make(chan struct{}))
+	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan struct{}))
 
 	rst := func(state State) {
 		r.state = state
@@ -148,9 +149,11 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 					},
 					// remember, the r below is the one at compile-time
 					&Raft{
-						Mutex:  r.Mutex,
-						Config: r.Config,
-						me:     r.me,
+						Mutex:    r.Mutex,
+						Config:   r.Config,
+						cpeers:   r.cpeers,
+						listener: r.listener,
+						me:       r.me,
 						// * → Follower
 						state: Follower,
 						// term updated accordingly
@@ -167,7 +170,7 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 }
 
 func TestRequestVoteFromEqTerm(t *testing.T) {
-	r := NewRaft(nil, 0, make(chan struct{}))
+	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan struct{}))
 
 	rst := func(state State, peer int, term int) {
 		r.state = state
@@ -220,6 +223,8 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 			&Raft{
 				Mutex:       r.Mutex,
 				Config:      r.Config,
+				cpeers:      r.cpeers,
+				listener:    r.listener,
 				me:          r.me,
 				state:       r.state,
 				currentTerm: r.currentTerm,
@@ -274,4 +279,88 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 
 func TestAppendEntries(t *testing.T) {
 
+}
+
+// setup two peers, connect them, and perform
+// a genuine RPC call
+func TestAppendHeartBeatRPC(t *testing.T) {
+	c := Config{
+		Peers: []string{":6767", ":6868"},
+	}
+	start := make(chan struct{})
+	re0 := make(chan struct{})
+	re1 := make(chan struct{})
+	r0 := NewRaft(&c, 0, start, re0)
+	r1 := NewRaft(&c, 1, start, re1)
+
+	if err := r0.connect(); err != nil {
+		t.Errorf("Cannot setup peer0: %s", err)
+	}
+
+	if err := r1.connect(); err != nil {
+		t.Errorf("Cannot setup peer1: %s", err)
+	}
+
+	defer r0.disconnect()
+	defer r1.disconnect()
+
+	close(start)
+
+	<-re0
+	<-re1
+
+	if r0.cpeers[0] != nil {
+		t.Errorf("peer0 can't talk to itself")
+	}
+
+	if r0.cpeers[1] == nil {
+		t.Errorf("peer0 can't talk to peer1")
+	}
+
+	if r1.cpeers[0] == nil {
+		t.Errorf("peer1 can't talk to peer0")
+	}
+
+	if r1.cpeers[1] != nil {
+		t.Errorf("peer1 can't talk to itself")
+	}
+
+	close(r0.stopped)
+	close(r1.stopped)
+
+	r1t := r1.currentTerm
+	ftests.Run(t, []ftests.Test{
+		{
+			"sending (0→1) from lower term",
+			r0.sendAppendEntries,
+			[]any{
+				r1.currentTerm-1,
+				r1.me,
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    r1.currentTerm,
+					Success: false,
+				},
+			},
+		},
+		{
+			"sending (0→1) from higher term",
+			r0.sendAppendEntries,
+			[]any{
+				r1.currentTerm+1,
+				r1.me,
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    r1t+1,
+					Success: true,
+				},
+			},
+		},
+	})
+
+	if r1.currentTerm != r1t+1 {
+		t.Errorf("r1's currentTerm not updated")
+	}
 }

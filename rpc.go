@@ -23,7 +23,7 @@ type RequestVoteReply struct {
 	VoteGranted bool // « true means candidate received vote »
 }
 
-func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -31,7 +31,7 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 		reply.Term = r.currentTerm
 		reply.Success = false
 
-		return
+		return nil
 	}
 
 	if args.Term > r.currentTerm {
@@ -40,7 +40,7 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 		reply.Term = r.currentTerm
 		reply.Success = true
 
-		return
+		return nil
 	}
 
 	if args.Term == r.currentTerm {
@@ -50,7 +50,7 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	panic("unreachable")
 }
 
-func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
 	r.Lock()
 	defer r.Unlock()
 
@@ -58,7 +58,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = r.currentTerm
 		reply.VoteGranted = false
 
-		return
+		return nil
 	}
 
 	if args.Term > r.currentTerm {
@@ -68,7 +68,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = r.currentTerm
 		reply.VoteGranted = true
 
-		return
+		return nil
 	}
 
 	if args.Term == r.currentTerm {
@@ -76,14 +76,14 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			reply.Term = r.currentTerm
 			reply.VoteGranted = false
 
-			return
+			return nil
 		}
 
 		if r.is(Leader) {
 			reply.Term = r.currentTerm
 			reply.VoteGranted = false
 
-			return
+			return nil
 		}
 
 		if r.is(Follower) {
@@ -93,14 +93,14 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 				reply.Term = r.currentTerm
 				reply.VoteGranted = true
 
-				return
+				return nil
 			}
 
 			if r.votedFor != nullVotedFor {
 				reply.Term = r.currentTerm
 				reply.VoteGranted = false
 
-				return
+				return nil
 			}
 		}
 	}
