@@ -79,6 +79,10 @@ func (r *Raft) forEachPeer(f func(int)) {
 	}
 }
 
+func (r *Raft) is(state State) bool {
+	return r.state == state
+}
+
 // toLeader(), toCandidate() and toFollower() encode
 // (raft) state changes
 

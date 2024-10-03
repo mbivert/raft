@@ -51,6 +51,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
 		reply.VoteGranted = false
+
 		return
 	}
 
@@ -60,9 +61,43 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 		reply.Term = r.currentTerm
 		reply.VoteGranted = true
+
 		return
 	}
 
 	if args.Term == r.currentTerm {
+		if r.is(Candidate) {
+			reply.Term = r.currentTerm
+			reply.VoteGranted = false
+
+			return
+		}
+
+		if r.is(Leader) {
+			reply.Term = r.currentTerm
+			reply.VoteGranted = false
+
+			return
+		}
+
+		if r.is(Follower) {
+			if r.votedFor == nullVotedFor || r.votedFor == args.CandidateId {
+				r.votedFor = args.CandidateId
+
+				reply.Term = r.currentTerm
+				reply.VoteGranted = true
+
+				return
+			}
+
+			if r.votedFor != nullVotedFor {
+				reply.Term = r.currentTerm
+				reply.VoteGranted = false
+
+				return
+			}
+		}
 	}
+
+	panic("unreachable")
 }
