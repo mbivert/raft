@@ -284,30 +284,13 @@ func TestAppendEntries(t *testing.T) {
 // setup two peers, connect them, and perform
 // a genuine RPC call
 func TestAppendHeartBeatRPC(t *testing.T) {
-	c := Config{
+	rs, err := mkNetwork(&Config{
 		Peers: []string{":6767", ":6868"},
+	})
+	if err != nil {
+		t.Errorf(err.Error())
 	}
-	start := make(chan struct{})
-	re0 := make(chan struct{})
-	re1 := make(chan struct{})
-	r0 := NewRaft(&c, 0, start, re0)
-	r1 := NewRaft(&c, 1, start, re1)
-
-	if err := r0.connect(); err != nil {
-		t.Errorf("Cannot setup peer0: %s", err)
-	}
-
-	if err := r1.connect(); err != nil {
-		t.Errorf("Cannot setup peer1: %s", err)
-	}
-
-	defer r0.disconnect()
-	defer r1.disconnect()
-
-	close(start)
-
-	<-re0
-	<-re1
+	r0, r1 := rs[0], rs[1]
 
 	if r0.cpeers[0] != nil {
 		t.Errorf("peer0 can't talk to itself")
@@ -325,16 +308,13 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		t.Errorf("peer1 can't talk to itself")
 	}
 
-	close(r0.stopped)
-	close(r1.stopped)
-
 	r1t := r1.currentTerm
 	ftests.Run(t, []ftests.Test{
 		{
 			"sending (0→1) from lower term",
 			r0.sendAppendEntries,
 			[]any{
-				r1.currentTerm-1,
+				r1.currentTerm - 1,
 				r1.me,
 			},
 			[]any{
@@ -348,12 +328,12 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 			"sending (0→1) from higher term",
 			r0.sendAppendEntries,
 			[]any{
-				r1.currentTerm+1,
+				r1.currentTerm + 1,
 				r1.me,
 			},
 			[]any{
 				&AppendEntriesReply{
-					Term:    r1t+1,
+					Term:    r1t + 1,
 					Success: true,
 				},
 			},
@@ -363,4 +343,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 	if r1.currentTerm != r1t+1 {
 		t.Errorf("r1's currentTerm not updated")
 	}
+
+	close(r0.stopped)
+	close(r1.stopped)
 }

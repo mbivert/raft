@@ -220,9 +220,11 @@ func (r *Raft) requestVote(term, peer int, vote <-chan struct{}) *RequestVoteRep
 		Term:        term,
 		CandidateId: r.me,
 	}
+
 	if err := r.cpeers[peer].Call("Raft.RequestVote", &args, &reply); err != nil {
 		panic(err)
 	}
+
 	return &reply
 }
 
