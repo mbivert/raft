@@ -181,14 +181,8 @@ func (r *Raft) shouldStartElection() bool {
 
 // assumes we're locked
 func (r *Raft) rstElectionTimeout() int64 {
-	return -1
-
-	// TODO
-	d := r.ElectionTimeout[0] + rand.Int63n(r.ElectionTimeout[1])
-
+	d := r.ElectionTimeout[0] + rand.Int63n(r.ElectionTimeout[1]-r.ElectionTimeout[0])
 	r.electionTimeout = time.Now().Add(time.Duration(d) * time.Millisecond)
-
-	// for tests eventually? (XXX/TODO)
 	return d
 }
 

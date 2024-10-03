@@ -1,5 +1,5 @@
 /*
- * Test individual RPCs.
+ * Testing individual RPCs.
  */
 package main
 
@@ -286,6 +286,7 @@ func TestAppendEntries(t *testing.T) {
 func TestAppendHeartBeatRPC(t *testing.T) {
 	rs, err := mkNetwork(&Config{
 		Peers: []string{":6767", ":6868"},
+		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {
 		t.Errorf(err.Error())
