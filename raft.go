@@ -67,7 +67,7 @@ type Raft struct {
 // NOTE: The start channel is because we sometimes don't want
 // to really start the raft, e.g. while testing individual RPC
 // requests.
-func NewRaft(c *Config, me int, start, ready chan struct{}) *Raft {
+func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft {
 	var r Raft
 
 	r.Mutex = &sync.Mutex{}
@@ -84,11 +84,11 @@ func NewRaft(c *Config, me int, start, ready chan struct{}) *Raft {
 	// before starting
 	go func() {
 		<-start
-		// TODO: error management
 		if err := r.connectPeers(); err != nil {
-			panic(err)
+			ready <- err
+			return
 		}
-		ready <- struct{}{}
+		ready <- nil
 		r.runElectionTimer()
 	}()
 
