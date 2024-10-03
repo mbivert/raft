@@ -3,21 +3,24 @@ package main
 import (
 	"sync"
 	"time"
+
+	"math/rand"
 )
 
-// parsed from json
+// parsed from json (
 type Config struct {
-	Peers            []string      // ip:port
-	HeartbeatsPeriod time.Duration // time.ParseDuration()
-	RPCTimeout       time.Duration
-	ElectionTimeout  [2]time.Duration
+	Peers           []string         // ip:port
+	HeartbeatPeriod time.Duration    // sending heartbeats periodically
+	RPCTimeout      time.Duration    // RPC can't last more than
+	ElectionTimeout [2]int64         // election timeout choosen between those (ms)
 }
 
+// time.ParseDuration()
 // https://stackoverflow.com/questions/48050945/how-to-unmarshal-json-into-durations
 // https://stackoverflow.com/questions/23330024/does-rpc-have-a-timeout-mechanism
 
 type LogEntry struct {
-	data any
+	Data any
 	Term int
 }
 
@@ -27,10 +30,11 @@ type Raft struct {
 	*sync.Mutex
 	*Config
 
-	me          int   // Raft.Confir.Peers[] id; command line argument
-	state       State // current state
-	currentTerm int   // current term
-	votedFor    int
+	me              int       // Raft.Confir.Peers[] id; command line argument
+	state           State     // current state
+	currentTerm     int       // current term
+	votedFor        int       // who we votedFor (eventually nullVotedFor)
+	electionTimeout time.Time // last time we received a heartbeat
 
 	stopped chan struct{} // closed when stopped
 
@@ -94,12 +98,6 @@ func (r *Raft) toLeader() {
 }
 
 // assumes we're locked
-func (r *Raft) toCandidate() {
-	r.currentTerm++
-	r.requestVotes(r.currentTerm)
-}
-
-// assumes we're locked
 func (r *Raft) toFollower(term int) {
 	r.state = Follower
 	r.currentTerm = term
@@ -111,15 +109,44 @@ func (r *Raft) toFollower(term int) {
 // term (r.term) is different, they can safely stop running: this
 // is encoded, alongside r.stopped management, in canStop().
 
-func (r *Raft) shouldStop(startTerm int) bool {
+func (r *Raft) shouldStop() bool {
 	select {
 	case <-r.stopped:
 		return true
 	default:
 	}
+
+	return false
+}
+
+func (r *Raft) shouldStopTerm(startTerm int) bool {
+	if r.shouldStop() {
+		return true
+	}
+
 	r.Lock()
 	defer r.Unlock()
 	return r.currentTerm != startTerm
+}
+
+// assumes we're locked
+func (r *Raft) shouldStartElection() bool {
+	if r.is(Leader) {
+		return false
+	}
+
+	// we haven't received a heartbeat for too long
+	return time.Now().After(r.electionTimeout)
+}
+
+// assumes we're locked
+func (r *Raft) rstElectionTimeout() int64 {
+	d := r.ElectionTimeout[0] + rand.Int63n(r.ElectionTimeout[1])
+
+	r.electionTimeout = time.Now().Add(time.Duration(d) * time.Millisecond)
+
+	// for tests eventually?
+	return d
 }
 
 func (r *Raft) sendHeartbeat(startTerm int, peer int) {
@@ -130,8 +157,8 @@ func (r *Raft) sendHeartbeat(startTerm int, peer int) {
 }
 
 func (r *Raft) sendHeartbeats(startTerm int) {
-	for !r.shouldStop(startTerm) {
-		time.Sleep(r.HeartbeatsPeriod)
+	for !r.shouldStopTerm(startTerm) {
+		time.Sleep(r.HeartbeatPeriod)
 		r.forEachPeer(func(peer int) { go r.sendHeartBeat(startTerm, peer) })
 	}
 }
@@ -142,7 +169,34 @@ func (r *Raft) requestVote(term int, peer int) {
 func (r *Raft) requestVotes(term int) {
 }
 
+func (r *Raft) startElection() {
+	r.rstElectionTimeout()
+	r.state = Candidate
+	r.votedFor = r.me
+	r.currentTerm++
+
+	go r.requestVotes(r.currentTerm)
+
+	r.Unlock()
+}
+
+// assumes we're locked
+func (r *Raft) toCandidate() {
+	r.currentTerm++
+	r.requestVotes(r.currentTerm)
+}
+
 func (r *Raft) runElectionTimer() {
+	for !r.shouldStop() {
+		r.Lock()
+
+		if r.shouldStartElection() {
+			// will r.Unlock()
+			r.startElection()
+		} else {
+			r.Unlock()
+		}
+	}
 }
 
 func (r *Raft) sendHeartBeat(term int, peer int) {

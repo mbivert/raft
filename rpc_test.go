@@ -9,6 +9,9 @@ import (
 	"github.com/mbivert/ftests"
 )
 
+// tAppendEntries & tRequestVote wraps calling the RPCs
+// so as to return the potentially updated Raft object alongside
+// the result (*Reply) of the call.
 func tAppendEntries(r *Raft, args *AppendEntriesArgs) (*AppendEntriesReply, *Raft) {
 	var reply AppendEntriesReply
 	r.AppendEntries(args, &reply)
@@ -78,10 +81,6 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 			},
 		},
 	})
-}
-
-func TestAppendEntries(t *testing.T) {
-
 }
 
 func TestRequestVoteFromLowerTerm(t *testing.T) {
@@ -271,4 +270,8 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 			r,
 		},
 	}})
+}
+
+func TestAppendEntries(t *testing.T) {
+
 }

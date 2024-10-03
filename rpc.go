@@ -30,18 +30,24 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
 		reply.Success = false
+
 		return
 	}
 
 	if args.Term > r.currentTerm {
 		r.toFollower(args.Term)
+
 		reply.Term = r.currentTerm
 		reply.Success = true
+
 		return
 	}
 
 	if args.Term == r.currentTerm {
+		panic("TODO")
 	}
+
+	panic("unreachable")
 }
 
 func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
