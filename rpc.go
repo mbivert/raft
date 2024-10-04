@@ -37,6 +37,8 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	if args.Term > r.currentTerm {
 		r.toFollower(args.Term)
 
+		r.rstElectionTimeout()
+
 		reply.Term = r.currentTerm
 		reply.Success = true
 
@@ -44,7 +46,12 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	}
 
 	if args.Term == r.currentTerm {
-		panic("TODO")
+		r.rstElectionTimeout()
+
+		reply.Term = r.currentTerm
+		reply.Success = true
+
+		return nil
 	}
 
 	panic("unreachable")

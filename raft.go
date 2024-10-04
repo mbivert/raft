@@ -141,6 +141,15 @@ func (r *Raft) is(state State) bool {
 	return r.state == state
 }
 
+// assumes we're locked (so term is actually r.currentTerm)
+func (r *Raft) toLeader(term int) {
+	r.state = Leader
+
+	// NOTE: we'll soon have more to do here
+
+	go r.sendHeartbeats(term)
+}
+
 // assumes we're locked
 func (r *Raft) toFollower(term int) {
 	r.state = Follower
@@ -148,7 +157,7 @@ func (r *Raft) toFollower(term int) {
 	r.votedFor = nullVotedFor
 }
 
-// sendHeartbeat(), sendHeartbeats(), requestVote(), requestVotes()
+// sendAppendEntries(), sendHeartbeats(), requestVote(), requestVotes()
 // are only relevant for a given term (term). If the current
 // term (r.currentTerm) is different, they can safely stop running: this
 // is encoded, alongside r.stopped management, in canStop().
@@ -163,10 +172,14 @@ func (r *Raft) shouldStop() bool {
 	return false
 }
 
-func (r *Raft) atTerm(term int) bool {
+func (r *Raft) at(term int) bool {
+	return r.currentTerm == term
+}
+
+func (r *Raft) lAt(term int) bool {
 	r.Lock()
 	defer r.Unlock()
-	return r.currentTerm == term
+	return r.at(term)
 }
 
 // assumes we're locked
@@ -186,7 +199,7 @@ func (r *Raft) rstElectionTimeout() int64 {
 	return d
 }
 
-func (r *Raft) sendAppendEntries(term, peer int) *AppendEntriesReply {
+func (r *Raft) callAppendEntries(term, peer int) *AppendEntriesReply {
 	var reply AppendEntriesReply
 	args := AppendEntriesArgs{
 		Term:     term,
@@ -199,16 +212,16 @@ func (r *Raft) sendAppendEntries(term, peer int) *AppendEntriesReply {
 }
 
 func (r *Raft) sendHeartbeats(term int) {
-	for !r.shouldStop() && r.atTerm(term) {
+	for !r.shouldStop() && r.lAt(term) {
 		time.Sleep(r.HeartbeatPeriod)
 		r.forEachPeer(func(peer int) error {
-			go r.sendAppendEntries(term, peer)
+			go r.callAppendEntries(term, peer)
 			return nil
 		})
 	}
 }
 
-func (r *Raft) requestVote(term, peer int, vote <-chan struct{}) *RequestVoteReply {
+func (r *Raft) callRequestVote(term, peer int) *RequestVoteReply {
 	var reply RequestVoteReply
 	args := RequestVoteArgs{
 		Term:        term,
@@ -222,23 +235,67 @@ func (r *Raft) requestVote(term, peer int, vote <-chan struct{}) *RequestVoteRep
 	return &reply
 }
 
-func (r *Raft) requestVotes(term int) {
-	// start from 1: voting for ourselves
-	// count := 1
+func (r *Raft) hasMajority(count int) bool {
+	return count >= (len(r.Peers)/2)+1
+}
 
+type voteCounter struct {
+	*sync.Mutex
+	count   int
+	elected bool
+}
+
+func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
+	// TODO: timeouts
+	reply := r.callRequestVote(term, peer)
+
+	if reply.VoteGranted {
+		vc.Lock()
+		vc.count++
+		if !vc.elected && r.hasMajority(vc.count) {
+			r.Lock()
+			if r.at(term) && r.is(Candidate) {
+				vc.elected = true
+				r.toLeader(term)
+			}
+			r.Unlock()
+		}
+		vc.Unlock()
+
+		return
+	}
+
+	if !reply.VoteGranted {
+		r.Lock()
+		// if we're still really candidating for that term,
+		// and someone is ahead of us, revert to follower
+		if r.at(term) && r.is(Candidate) && reply.Term > term {
+			r.toFollower(reply.Term)
+		}
+		r.Unlock()
+
+		return
+	}
+
+	panic("unreachable")
+}
+
+func (r *Raft) requestVotes(term int) {
 	var wg sync.WaitGroup
 
-	vote := make(chan struct{})
+	// start from 1, as we vote for ourselves
+	vc := voteCounter{&sync.Mutex{}, 1, false}
 
 	r.forEachPeer(func(peer int) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-
-			r.requestVote(term, peer, vote)
+			r.requestVote(term, peer, &vc)
 		}()
 		return nil
 	})
+
+	wg.Wait()
 }
 
 func (r *Raft) startElection() {
@@ -272,7 +329,4 @@ func (r *Raft) runElectionTimer() {
 			r.Unlock()
 		}
 	}
-}
-
-func (r *Raft) sendHeartBeat(term int, peer int) {
 }

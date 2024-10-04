@@ -24,8 +24,11 @@ func tRequestVote(r *Raft, args *RequestVoteArgs) (*RequestVoteReply, *Raft) {
 }
 
 // heartbeat <=> no log entries
+// TODO: fails because we're now updating the r.electionTimeout
 func TestAppendEntriesHeartbeat(t *testing.T) {
-	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan error))
+	r := NewRaft(&Config{
+			ElectionTimeout: [2]int64{150, 300},
+		}, 0, make(chan struct{}), make(chan error))
 	r.currentTerm = 1
 	r.votedFor = 42
 
@@ -85,7 +88,9 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 }
 
 func TestRequestVoteFromLowerTerm(t *testing.T) {
-	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan error))
+	r := NewRaft(&Config{
+			ElectionTimeout: [2]int64{150, 300},
+		}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State) {
 		r.state = state
@@ -120,7 +125,9 @@ func TestRequestVoteFromLowerTerm(t *testing.T) {
 }
 
 func TestRequestVoteFromHigherTerm(t *testing.T) {
-	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan error))
+	r := NewRaft(&Config{
+			ElectionTimeout: [2]int64{150, 300},
+		}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State) {
 		r.state = state
@@ -170,7 +177,9 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 }
 
 func TestRequestVoteFromEqTerm(t *testing.T) {
-	r := NewRaft(&Config{}, 0, make(chan struct{}), make(chan error))
+	r := NewRaft(&Config{
+			ElectionTimeout: [2]int64{150, 300},
+		}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State, peer int, term int) {
 		r.state = state
@@ -289,7 +298,7 @@ func TestAppendEntries(t *testing.T) {
 // for each Raft, one .Add() for each goroutine?)
 func TestAppendHeartBeatRPC(t *testing.T) {
 	rs, err := mkNetwork(&Config{
-		Peers: []string{":6767", ":6868"},
+		Peers:           []string{":6767", ":6868"},
 		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {
@@ -317,7 +326,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 	ftests.Run(t, []ftests.Test{
 		{
 			"sending (0→1) from lower term",
-			r0.sendAppendEntries,
+			r0.callAppendEntries,
 			[]any{
 				r1.currentTerm - 1,
 				r1.me,
@@ -331,7 +340,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		},
 		{
 			"sending (0→1) from higher term",
-			r0.sendAppendEntries,
+			r0.callAppendEntries,
 			[]any{
 				r1.currentTerm + 1,
 				r1.me,
