@@ -28,7 +28,7 @@ func TestRstElectionTimeout(t *testing.T) {
 
 func TestRequestVote(t *testing.T) {
 	rs, err := mkNetwork(&Config{
-		Peers:           []string{":7070", ":7171"},
+		Peers:           []string{":6767", ":6868"},
 		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {
@@ -54,6 +54,5 @@ func TestRequestVote(t *testing.T) {
 		},
 	})
 
-	close(rs[0].stopped)
-	close(rs[1].stopped)
+	rmNetwork(rs)
 }

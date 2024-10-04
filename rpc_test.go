@@ -301,10 +301,6 @@ func TestAppendEntries(t *testing.T) {
 
 // setup two peers, connect them, and perform
 // a genuine RPC call
-//
-// TODO: we need to teardown the network properly (-count 100 and
-// we start to meet issues; heck, -count 2 -__-"; perhaps a waitgroup
-// for each Raft, one .Add() for each goroutine?)
 func TestAppendHeartBeatRPC(t *testing.T) {
 	rs, err := mkNetwork(&Config{
 		Peers:           []string{":6767", ":6868"},
@@ -367,6 +363,5 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		t.Errorf("r1's currentTerm not updated")
 	}
 
-	close(r0.stopped)
-	close(r1.stopped)
+	rmNetwork(rs)
 }

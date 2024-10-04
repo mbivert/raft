@@ -28,3 +28,14 @@ func mkNetwork(c *Config) ([]*Raft, error) {
 
 	return rafts, nil
 }
+
+// remove/kill a peer network instantiated by mkNetwork()
+func rmNetwork(rafts []*Raft) {
+	for i := range rafts {
+		// stop long-running goroutines
+		close(rafts[i].stopped)
+
+		// stop RPC server
+		rafts[i].disconnect()
+	}
+}
