@@ -11,10 +11,17 @@ import (
 
 // wrappers to ease tests (in particular, we want to check
 // Raft objects's states is properly updated)
-func tAppendEntries(r *Raft, args *AppendEntriesArgs) (*AppendEntriesReply, *Raft) {
+//
+// Last return value indicates whether r.electionTimeout has changed;
+// it's returned as it was before the call in the returned Raft object
+// to ease testing.
+func tAppendEntries(r *Raft, args *AppendEntriesArgs) (*AppendEntriesReply, *Raft, bool) {
 	var reply AppendEntriesReply
+	a := r.electionTimeout
 	r.AppendEntries(args, &reply)
-	return &reply, r
+	b := r.electionTimeout
+	r.electionTimeout = a
+	return &reply, r, a != b
 }
 
 func tRequestVote(r *Raft, args *RequestVoteArgs) (*RequestVoteReply, *Raft) {
@@ -24,11 +31,10 @@ func tRequestVote(r *Raft, args *RequestVoteArgs) (*RequestVoteReply, *Raft) {
 }
 
 // heartbeat <=> no log entries
-// TODO: fails because we're now updating the r.electionTimeout
 func TestAppendEntriesHeartbeat(t *testing.T) {
 	r := NewRaft(&Config{
-			ElectionTimeout: [2]int64{150, 300},
-		}, 0, make(chan struct{}), make(chan error))
+		ElectionTimeout: [2]int64{150, 300},
+	}, 0, make(chan struct{}), make(chan error))
 	r.currentTerm = 1
 	r.votedFor = 42
 
@@ -49,6 +55,7 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					Success: false,
 				},
 				r,
+				false,
 			},
 		},
 		{
@@ -78,10 +85,12 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					// term updated accordingly
 					currentTerm: r.currentTerm + 2,
 					// reset
-					votedFor: nullVotedFor,
-					stopped:  r.stopped,
-					log:      r.log,
+					votedFor:        nullVotedFor,
+					stopped:         r.stopped,
+					log:             r.log,
+					electionTimeout: r.electionTimeout,
 				},
+				true,
 			},
 		},
 	})
@@ -89,8 +98,8 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 
 func TestRequestVoteFromLowerTerm(t *testing.T) {
 	r := NewRaft(&Config{
-			ElectionTimeout: [2]int64{150, 300},
-		}, 0, make(chan struct{}), make(chan error))
+		ElectionTimeout: [2]int64{150, 300},
+	}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State) {
 		r.state = state
@@ -126,8 +135,8 @@ func TestRequestVoteFromLowerTerm(t *testing.T) {
 
 func TestRequestVoteFromHigherTerm(t *testing.T) {
 	r := NewRaft(&Config{
-			ElectionTimeout: [2]int64{150, 300},
-		}, 0, make(chan struct{}), make(chan error))
+		ElectionTimeout: [2]int64{150, 300},
+	}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State) {
 		r.state = state
@@ -178,8 +187,8 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 
 func TestRequestVoteFromEqTerm(t *testing.T) {
 	r := NewRaft(&Config{
-			ElectionTimeout: [2]int64{150, 300},
-		}, 0, make(chan struct{}), make(chan error))
+		ElectionTimeout: [2]int64{150, 300},
+	}, 0, make(chan struct{}), make(chan error))
 
 	rst := func(state State, peer int, term int) {
 		r.state = state
