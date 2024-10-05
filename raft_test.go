@@ -11,23 +11,27 @@ import (
 )
 
 func TestRstElectionTimeout(t *testing.T) {
-	c := Config{
-		Peers:           []string{":1010"},
+	rs, _, err := mkNetwork(&Config{
+		Peers:           []string{":9090"},
 		ElectionTimeout: [2]int64{150, 300},
+	})
+	if err != nil {
+		t.Errorf(err.Error())
 	}
 
-	r := NewRaft(&c, 0, make(chan struct{}), make(chan error))
+	r := rs[0]
+
 	for n := 0; n < 50; n++ {
 		d := r.rstElectionTimeout()
-		if d < c.ElectionTimeout[0] || d >= c.ElectionTimeout[1] {
+		if d < r.ElectionTimeout[0] || d >= r.ElectionTimeout[1] {
 			t.Errorf("Election timeout out of bounds: %d ∉ [%d, %d[",
-				d, c.ElectionTimeout[0], c.ElectionTimeout[1])
+				d, r.ElectionTimeout[0], r.ElectionTimeout[1])
 		}
 	}
 }
 
 func TestRequestVote(t *testing.T) {
-	rs, err := mkNetwork(&Config{
+	rs, _, err := mkNetwork(&Config{
 		Peers:           []string{":6767", ":6868"},
 		ElectionTimeout: [2]int64{150, 300},
 	})

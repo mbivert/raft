@@ -114,3 +114,29 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 
 	panic("unreachable")
 }
+
+func (r *Raft) callAppendEntries(term, peer int) *AppendEntriesReply {
+	var reply AppendEntriesReply
+	args := AppendEntriesArgs{
+		Term:     term,
+		LeaderId: r.me,
+	}
+	if err := r.cpeers[peer].Call("Raft.AppendEntries", &args, &reply); err != nil {
+		panic(err)
+	}
+	return &reply
+}
+
+func (r *Raft) callRequestVote(term, peer int) *RequestVoteReply {
+	var reply RequestVoteReply
+	args := RequestVoteArgs{
+		Term:        term,
+		CandidateId: r.me,
+	}
+
+	if err := r.cpeers[peer].Call("Raft.RequestVote", &args, &reply); err != nil {
+		panic(err)
+	}
+
+	return &reply
+}

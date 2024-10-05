@@ -68,7 +68,7 @@ type Raft struct {
 // NOTE: The start channel is because we sometimes don't want
 // to really start the raft, e.g. while testing individual RPC
 // requests.
-func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft {
+func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error) *Raft {
 	var r Raft
 
 	r.Mutex = &sync.Mutex{}
@@ -88,7 +88,7 @@ func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft
 		// wait for start signal: we don't want to start
 		// connecting with everyone until every peer has
 		// been launched already.
-		<-start
+		<-setup
 
 		// connect with everyone
 		if err := r.connectPeers(); err != nil {
@@ -98,6 +98,9 @@ func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft
 
 		// wait for everyone to be connected to everyone
 		ready <- nil
+
+		// Start running the timer
+		<-start
 		r.runElectionTimer()
 	}()
 
@@ -203,7 +206,7 @@ func (r *Raft) shouldStartElection() bool {
 		return false
 	}
 
-	// we haven't received a heartbeat for too long
+	// we haven't received a heartbeat recently enough
 	return time.Now().After(r.electionTimeout)
 }
 
@@ -212,18 +215,6 @@ func (r *Raft) rstElectionTimeout() int64 {
 	d := r.ElectionTimeout[0] + rand.Int63n(r.ElectionTimeout[1]-r.ElectionTimeout[0])
 	r.electionTimeout = time.Now().Add(time.Duration(d) * time.Millisecond)
 	return d
-}
-
-func (r *Raft) callAppendEntries(term, peer int) *AppendEntriesReply {
-	var reply AppendEntriesReply
-	args := AppendEntriesArgs{
-		Term:     term,
-		LeaderId: r.me,
-	}
-	if err := r.cpeers[peer].Call("Raft.AppendEntries", &args, &reply); err != nil {
-		panic(err)
-	}
-	return &reply
 }
 
 func (r *Raft) sendHeartbeats(term int) {
@@ -246,20 +237,6 @@ func (r *Raft) sendHeartbeats(term int) {
 	wg.Wait()
 }
 
-func (r *Raft) callRequestVote(term, peer int) *RequestVoteReply {
-	var reply RequestVoteReply
-	args := RequestVoteArgs{
-		Term:        term,
-		CandidateId: r.me,
-	}
-
-	if err := r.cpeers[peer].Call("Raft.RequestVote", &args, &reply); err != nil {
-		panic(err)
-	}
-
-	return &reply
-}
-
 func (r *Raft) hasMajority(count int) bool {
 	return count >= (len(r.Peers)/2)+1
 }
@@ -271,7 +248,7 @@ type voteCounter struct {
 }
 
 func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
-	// TODO: timeouts
+	// TODO: RPCs timeouts
 	reply := r.callRequestVote(term, peer)
 
 	if reply.VoteGranted {
@@ -310,6 +287,12 @@ func (r *Raft) requestVotes(term int) {
 
 	// start from 1, as we vote for ourselves
 	vc := voteCounter{&sync.Mutex{}, 1, false}
+
+	// ¯\_(ツ)_/¯
+	if r.hasMajority(vc.count) {
+		r.toLeader(term)
+		return
+	}
 
 	r.forEachPeer(func(peer int) error {
 		wg.Add(1)
