@@ -20,27 +20,64 @@ import (
 	"time"
 )
 
-func TestSinglePeer(t *testing.T) {
-	rs, start, err := mkNetwork(&Config{
-		Peers:           []string{":6767"},
-		ElectionTimeout: [2]int64{150, 300},
-	})
-	if err != nil {
-		t.Errorf(err.Error())
+func TestUnperturbatedElection(t *testing.T) {
+	peerss := [][]string{
+		[]string{":6767"},
+		[]string{":6767", ":6868"},
+		[]string{":6767", ":6868", ":6969"},
+		[]string{":6767", ":6868", ":6969", ":7070", ":7171"},
 	}
 
-	close(start)
+	for _, peers := range peerss {
+		rs, start, err := NewRafts(&Config{
+			Peers:           peers,
+			ElectionTimeout: [2]int64{150, 300},
+			ElectionTick:    10 * time.Millisecond,
+			HeartbeatTick:   10 * time.Millisecond,
+		})
+		if err != nil {
+			t.Errorf(err.Error())
+			continue
+		}
 
-	time.Sleep(time.Millisecond*time.Duration(rs[0].ElectionTimeout[1]) + rs[0].ElectionTick)
+		close(start)
 
-	rs[0].Lock()
-	if !rs[0].is(Leader) {
-		t.Errorf("Expecting to have been elected, is '%s'",  rs[0].state.String())
+		timeout := time.NewTimer(10 * time.Second)
+
+		lead := nullVotedFor
+		term := 0
+
+		for {
+			time.Sleep(20 * time.Millisecond)
+			select {
+			case <-timeout.C:
+				t.Errorf("No leader elected in 10s: %s", rs)
+				rs.kill()
+				return
+			default:
+			}
+
+			if lead = rs.getLeader(); lead != nullVotedFor {
+				// meh... things may have changed since getLeader()
+				rs[lead].Lock()
+				term = rs[lead].currentTerm
+				rs[lead].Unlock()
+				break
+			}
+		}
+
+		// XXX this still fails sometimes, even more so with
+		// config *Tick at 20ms. I guess it could happen, but
+		// not that often?
+
+		time.Sleep(time.Duration(rs[0].ElectionTimeout[1]) * time.Millisecond)
+
+		if x := rs.getLeader(); lead != x {
+			t.Errorf("Network is stable: leader shouldn't have changed: %d ≠ %d", lead, x)
+		} else if x := rs[lead].currentTerm; term != x {
+			t.Errorf("Network is stable: term shouldn't have changed: %d ≠ %d", term, x)
+		}
+
+		rs.kill()
 	}
-	if !rs[0].at(1) {
-		t.Errorf("First term should be 1, not '%d", +rs[0].currentTerm)
-	}
-	rs[0].Unlock()
-
-	rmNetwork(rs)
 }

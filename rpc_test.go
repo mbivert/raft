@@ -303,7 +303,7 @@ func TestAppendEntries(t *testing.T) {
 // setup two peers, connect them, and perform
 // a genuine RPC call
 func TestAppendHeartBeatRPC(t *testing.T) {
-	rs, _, err := mkNetwork(&Config{
+	rs, _, err := NewRafts(&Config{
 		Peers:           []string{":6767", ":6868"},
 		ElectionTick:    20 * time.Millisecond,
 		ElectionTimeout: [2]int64{150, 300},
@@ -365,5 +365,5 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		t.Errorf("r1's currentTerm not updated")
 	}
 
-	rmNetwork(rs)
+	rs.kill()
 }

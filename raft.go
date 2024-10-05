@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -328,4 +329,11 @@ func (r *Raft) runElectionTimer() {
 
 		r.Unlock()
 	}
+}
+
+// assumes we're locked (!) (for now, only used in tests,
+// when printing multiple Rafts at once: we want the state
+// of the group)
+func (r *Raft) String() string {
+	return fmt.Sprintf("peer:%d/state:%s/term:%d", r.me, r.state, r.currentTerm)
 }

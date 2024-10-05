@@ -121,9 +121,11 @@ func (r *Raft) callAppendEntries(term, peer int) *AppendEntriesReply {
 		Term:     term,
 		LeaderId: r.me,
 	}
+
 	if err := r.cpeers[peer].Call("Raft.AppendEntries", &args, &reply); err != nil {
 		panic(err)
 	}
+
 	return &reply
 }
 

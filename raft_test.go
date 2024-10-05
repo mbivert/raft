@@ -11,7 +11,7 @@ import (
 )
 
 func TestRstElectionTimeout(t *testing.T) {
-	rs, _, err := mkNetwork(&Config{
+	rs, _, err := NewRafts(&Config{
 		Peers:           []string{":9090"},
 		ElectionTimeout: [2]int64{150, 300},
 	})
@@ -31,7 +31,7 @@ func TestRstElectionTimeout(t *testing.T) {
 }
 
 func TestRequestVote(t *testing.T) {
-	rs, _, err := mkNetwork(&Config{
+	rs, _, err := NewRafts(&Config{
 		Peers:           []string{":6767", ":6868"},
 		ElectionTimeout: [2]int64{150, 300},
 	})
@@ -58,5 +58,5 @@ func TestRequestVote(t *testing.T) {
 		},
 	})
 
-	rmNetwork(rs)
+	rs.kill()
 }
