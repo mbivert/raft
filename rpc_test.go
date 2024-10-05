@@ -5,6 +5,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/mbivert/ftests"
 )
@@ -304,6 +305,7 @@ func TestAppendEntries(t *testing.T) {
 func TestAppendHeartBeatRPC(t *testing.T) {
 	rs, err := mkNetwork(&Config{
 		Peers:           []string{":6767", ":6868"},
+		ElectionTick:    20*time.Millisecond,
 		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {

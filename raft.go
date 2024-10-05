@@ -13,7 +13,8 @@ import (
 // parsed from json (
 type Config struct {
 	Peers           []string      // ip:port
-	HeartbeatPeriod time.Duration // sending heartbeats periodically
+	HeartbeatTick   time.Duration // sending heartbeats periodically
+	ElectionTick    time.Duration // check for election timeout periodically
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
 }
@@ -80,14 +81,22 @@ func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft
 	r.currentTerm = 0
 	r.votedFor = nullVotedFor
 
-	// We'll want to wait for everyone to be connected
-	// before starting
+	// NOTE/TODO: this is useful for current early tests, but
+	// we'll want the code to be smarter (e.g. tolerate a missing
+	// peer, in particular when setting up the cluster).
 	go func() {
+		// wait for start signal: we don't want to start
+		// connecting with everyone until every peer has
+		// been launched already.
 		<-start
+
+		// connect with everyone
 		if err := r.connectPeers(); err != nil {
 			ready <- err
 			return
 		}
+
+		// wait for everyone to be connected to everyone
 		ready <- nil
 		r.runElectionTimer()
 	}()
@@ -97,10 +106,12 @@ func NewRaft(c *Config, me int, start <-chan struct{}, ready chan<- error) *Raft
 	return &r
 }
 
+// tear down the rPC server
 func (r *Raft) disconnect() error {
 	return r.listener.Close()
 }
 
+// setup the RPC server
 func (r *Raft) connect() (err error) {
 	r.server = rpc.NewServer()
 
@@ -117,6 +128,7 @@ func (r *Raft) connect() (err error) {
 	return nil
 }
 
+// call f on every peer but ourselves
 func (r *Raft) forEachPeer(f func(int) error) error {
 	for peer := range r.Peers {
 		if peer != r.me {
@@ -128,6 +140,7 @@ func (r *Raft) forEachPeer(f func(int) error) error {
 	return nil
 }
 
+// try to dial every peer
 func (r *Raft) connectPeers() error {
 	return r.forEachPeer(func(p int) (err error) {
 		if r.cpeers[p], err = rpc.Dial("tcp", r.Peers[p]); err != nil {
@@ -137,6 +150,7 @@ func (r *Raft) connectPeers() error {
 	})
 }
 
+// assumes we're locked
 func (r *Raft) is(state State) bool {
 	return r.state == state
 }
@@ -159,8 +173,7 @@ func (r *Raft) toFollower(term int) {
 
 // sendAppendEntries(), sendHeartbeats(), requestVote(), requestVotes()
 // are only relevant for a given term (term). If the current
-// term (r.currentTerm) is different, they can safely stop running: this
-// is encoded, alongside r.stopped management, in canStop().
+// term (r.currentTerm) is different, they can safely stop running
 
 func (r *Raft) shouldStop() bool {
 	select {
@@ -172,10 +185,12 @@ func (r *Raft) shouldStop() bool {
 	return false
 }
 
+// assumes we're locked
 func (r *Raft) at(term int) bool {
 	return r.currentTerm == term
 }
 
+// same as at(), but lock.
 func (r *Raft) lAt(term int) bool {
 	r.Lock()
 	defer r.Unlock()
@@ -212,13 +227,23 @@ func (r *Raft) callAppendEntries(term, peer int) *AppendEntriesReply {
 }
 
 func (r *Raft) sendHeartbeats(term int) {
+	// I guess it's better to have a waitgroup collecting pending
+	// goroutines?
+	var wg sync.WaitGroup
+
 	for !r.shouldStop() && r.lAt(term) {
-		time.Sleep(r.HeartbeatPeriod)
+		time.Sleep(r.HeartbeatTick)
 		r.forEachPeer(func(peer int) error {
-			go r.callAppendEntries(term, peer)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r.callAppendEntries(term, peer)
+			}()
 			return nil
 		})
 	}
+
+	wg.Wait()
 }
 
 func (r *Raft) callRequestVote(term, peer int) *RequestVoteReply {
@@ -298,6 +323,7 @@ func (r *Raft) requestVotes(term int) {
 	wg.Wait()
 }
 
+// assumes we're locked
 func (r *Raft) startElection() {
 	r.rstElectionTimeout()
 	r.state = Candidate
@@ -305,28 +331,18 @@ func (r *Raft) startElection() {
 	r.currentTerm++
 
 	go r.requestVotes(r.currentTerm)
-
-	r.Unlock()
-}
-
-// assumes we're locked
-func (r *Raft) toCandidate() {
-	r.currentTerm++
-	r.requestVotes(r.currentTerm)
 }
 
 func (r *Raft) runElectionTimer() {
 	for !r.shouldStop() {
-		// TODO: config parameter
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(r.ElectionTick)
 
 		r.Lock()
 
 		if r.shouldStartElection() {
-			// will r.Unlock()
 			r.startElection()
-		} else {
-			r.Unlock()
 		}
+
+		r.Unlock()
 	}
 }
