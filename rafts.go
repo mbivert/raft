@@ -1,7 +1,10 @@
 // For tests: network of Raft peers.
 package main
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 type Rafts []*Raft
 
@@ -89,5 +92,28 @@ func (rs Rafts) kill() {
 
 		// stop RPC server
 		rs[i].disconnect()
+	}
+}
+
+// wait for a leader to be elected; returns nullVotedFor if none
+// after we reached the timeout. Second return value is the term.
+func (rs Rafts) waitForLeader(d time.Duration) (int, int) {
+	timeout := time.NewTimer(d)
+
+	for {
+		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-timeout.C:
+			return nullVotedFor, 0
+		default:
+		}
+
+		if lead := rs.getLeader(); lead != nullVotedFor {
+			// meh... things may have changed since getLeader()
+			rs[lead].Lock()
+			term := rs[lead].currentTerm
+			rs[lead].Unlock()
+			return lead, term
+		}
 	}
 }

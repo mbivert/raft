@@ -377,7 +377,6 @@ func (r *Raft) runElectionTimer() {
 
 		r.Unlock()
 
-
 		time.Sleep(r.ElectionTick)
 	}
 }
