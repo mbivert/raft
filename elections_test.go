@@ -20,8 +20,8 @@ func TestUnperturbatedElection(t *testing.T) {
 		rs, start, err := NewRafts(&Config{
 			Peers:           peers,
 			ElectionTimeout: [2]int64{150, 300},
-			ElectionTick:    10 * time.Millisecond,
-			HeartbeatTick:   10 * time.Millisecond,
+			ElectionTick:    20 * time.Millisecond,
+			HeartbeatTick:   20 * time.Millisecond,
 		})
 		if err != nil {
 			t.Errorf(err.Error())
@@ -55,10 +55,7 @@ func TestUnperturbatedElection(t *testing.T) {
 			}
 		}
 
-		// XXX this still fails sometimes, even more so with
-		// config *Tick at 20ms. I guess it could happen, but
-		// not that often?
-
+		// somewhat arbitrary
 		time.Sleep(time.Duration(rs[0].ElectionTimeout[1]) * time.Millisecond)
 
 		if x := rs.getLeader(); lead != x {

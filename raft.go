@@ -2,9 +2,11 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/rpc"
+	"os"
 	"sync"
 	"time"
 
@@ -66,6 +68,13 @@ type Raft struct {
 	stopped chan struct{} // closed when stopped
 }
 
+func init() {
+	var programLevel = new(slog.LevelVar)
+	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel})
+	slog.SetDefault(slog.New(h))
+	programLevel.Set(slog.LevelDebug)
+}
+
 // NOTE: The start channel is because we sometimes don't want
 // to really start the raft, e.g. while testing individual RPC
 // requests.
@@ -81,6 +90,8 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 	r.state = Follower
 	r.currentTerm = 0
 	r.votedFor = nullVotedFor
+
+	r.rstElectionTimeout()
 
 	// NOTE/TODO: this is useful for current early tests, but
 	// we'll want the code to be smarter (e.g. tolerate a missing
@@ -102,16 +113,21 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 
 		// Start running the timer
 		<-start
+
 		r.runElectionTimer()
 	}()
 
 	r.stopped = make(chan struct{})
+
+	slog.Debug("NewRaft", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 
 	return &r
 }
 
 // tear down the rPC server
 func (r *Raft) disconnect() error {
+	slog.Debug("disconnect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
 	// a Raft can be created without a working listener.
 	// when building a Rafts, we'll try to blindly tear
 	// down everyone, including half-baked Rafts.
@@ -123,6 +139,8 @@ func (r *Raft) disconnect() error {
 
 // setup the RPC server
 func (r *Raft) connect() (err error) {
+	slog.Debug("connect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
 	r.server = rpc.NewServer()
 
 	if err = r.server.Register(r); err != nil {
@@ -152,6 +170,8 @@ func (r *Raft) forEachPeer(f func(int) error) error {
 
 // try to dial every peer
 func (r *Raft) connectPeers() error {
+	slog.Debug("connectPeers", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
 	return r.forEachPeer(func(p int) (err error) {
 		if r.cpeers[p], err = rpc.Dial("tcp", r.Peers[p]); err != nil {
 			return err
@@ -168,6 +188,9 @@ func (r *Raft) is(state State) bool {
 // assumes we're locked (so term is actually r.currentTerm)
 func (r *Raft) toLeader(term int) {
 	r.state = Leader
+
+	slog.Debug("toLeader", "me", r.me, "port", r.Peers[r.me],
+		"term", term)
 
 	// NOTE: we'll soon have more to do here
 
@@ -221,6 +244,7 @@ func (r *Raft) shouldStartElection() bool {
 func (r *Raft) rstElectionTimeout() int64 {
 	d := r.ElectionTimeout[0] + rand.Int63n(r.ElectionTimeout[1]-r.ElectionTimeout[0])
 	r.electionTimeout = time.Now().Add(time.Duration(d) * time.Millisecond)
+
 	return d
 }
 
@@ -229,16 +253,32 @@ func (r *Raft) sendHeartbeats(term int) {
 	// goroutines?
 	var wg sync.WaitGroup
 
+	// NOTE: it might be slightly better to check for
+	// relevancy within the innermost goroutines, but
+	// the impact doesn't seem to be too perceptible so far.
 	for !r.shouldStop() && r.lAt(term) {
-		time.Sleep(r.HeartbeatTick)
 		r.forEachPeer(func(peer int) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				slog.Debug("sendHeartbeats", "from", r.me,
+					"to", peer, "port", r.Peers[r.me], "term", term)
+
 				r.callAppendEntries(term, peer)
 			}()
 			return nil
 		})
+
+		// NOTE: because the election timeout isn't reseted on
+		// voting, it's (noticeably) better not to delay the first row
+		// of heartbeats by sleeping first. Otherwise, peers are
+		// more likely to restart an election, and the leader election
+		// is more unstable.
+		//
+		// That kind of issue didn't arised in an earlier, time.Ticker
+		// based implementation, but this coarser time.Sleep()-based
+		// version remains simpler overall.
+		time.Sleep(r.HeartbeatTick)
 	}
 
 	wg.Wait()
@@ -320,13 +360,15 @@ func (r *Raft) startElection() {
 	r.votedFor = r.me
 	r.currentTerm++
 
+	slog.Debug("startElection", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
 	go r.requestVotes(r.currentTerm)
 }
 
 func (r *Raft) runElectionTimer() {
-	for !r.shouldStop() {
-		time.Sleep(r.ElectionTick)
+	slog.Debug("runElectionTimer", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 
+	for !r.shouldStop() {
 		r.Lock()
 
 		if r.shouldStartElection() {
@@ -334,6 +376,9 @@ func (r *Raft) runElectionTimer() {
 		}
 
 		r.Unlock()
+
+
+		time.Sleep(r.ElectionTick)
 	}
 }
 

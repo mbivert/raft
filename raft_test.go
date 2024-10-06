@@ -23,6 +23,7 @@ func TestRstElectionTimeout(t *testing.T) {
 
 	for n := 0; n < 50; n++ {
 		d := r.rstElectionTimeout()
+
 		if d < r.ElectionTimeout[0] || d >= r.ElectionTimeout[1] {
 			t.Errorf("Election timeout out of bounds: %d ∉ [%d, %d[",
 				d, r.ElectionTimeout[0], r.ElectionTimeout[1])

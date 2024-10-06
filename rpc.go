@@ -3,6 +3,8 @@
  */
 package main
 
+import "log/slog"
+
 type AppendEntriesArgs struct {
 	Term     int
 	LeaderId int
@@ -26,6 +28,9 @@ type RequestVoteReply struct {
 func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
 	r.Lock()
 	defer r.Unlock()
+
+	slog.Debug("AppendEntries", "from", args.LeaderId, "me", r.me,
+		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
 
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
@@ -60,6 +65,9 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
 	r.Lock()
 	defer r.Unlock()
+
+	slog.Debug("RequestVote", "from", args.CandidateId, "me", r.me,
+		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
 
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
