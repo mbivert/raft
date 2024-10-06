@@ -112,7 +112,13 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 
 // tear down the rPC server
 func (r *Raft) disconnect() error {
-	return r.listener.Close()
+	// a Raft can be created without a working listener.
+	// when building a Rafts, we'll try to blindly tear
+	// down everyone, including half-baked Rafts.
+	if r.listener != nil {
+		return r.listener.Close()
+	}
+	return nil
 }
 
 // setup the RPC server

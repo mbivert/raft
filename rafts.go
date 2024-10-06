@@ -80,6 +80,10 @@ func NewRafts(c *Config) (Rafts, chan<- struct{}, error) {
 // remove/kill a peer network
 func (rs Rafts) kill() {
 	for i := range rs {
+		if rs[i] == nil {
+			continue
+		}
+
 		// stop long-running goroutines
 		close(rs[i].stopped)
 
