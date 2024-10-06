@@ -124,7 +124,36 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 	return &r
 }
 
-// tear down the rPC server
+// stop long-running goroutines; Guards against double stop()/kill()
+func (r *Raft) stop() {
+	slog.Debug("stop", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
+	select {
+	case <-r.stopped:
+	default:
+		close(r.stopped)
+	}
+}
+
+// stopAndDisconnect()
+func (r *Raft) kill() error {
+	// TODO: .Lock() for all our slog.Debug() :-/
+	slog.Debug("kill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
+	r.stop()
+
+	// stop RPC server
+	return r.disconnect()
+}
+
+func (r *Raft) unkill() error {
+	r.stopped = make(chan struct{})
+
+	// stop RPC server
+	return r.connect()
+}
+
+// tear down the RPC server
 func (r *Raft) disconnect() error {
 	slog.Debug("disconnect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 

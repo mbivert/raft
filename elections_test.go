@@ -49,7 +49,7 @@ func TestUnperturbatedElection(t *testing.T) {
 func TestPeerInOutElection(t *testing.T) {
 	peerss := [][]string{
 		[]string{":6767", ":6868", ":6969"},
-		//[]string{":6767", ":6868", ":6969", ":7070", ":7171"},
+		[]string{":6767", ":6868", ":6969", ":7070", ":7171"},
 	}
 
 	for _, peers := range peerss {
@@ -67,21 +67,28 @@ func TestPeerInOutElection(t *testing.T) {
 
 		close(start)
 
-		lead, _ := rs.waitForLeader(10 * time.Second)
+		lead, term := rs.waitForLeader(10 * time.Second)
 		if lead == nullVotedFor {
 			t.Errorf("No leader elected in 10s: %s", rs)
 			rs.kill()
 			return
 		}
 
-		rs[lead].disconnect()
+		rs[lead].kill()
 
-		// somewhat arbitrary
-		time.Sleep(time.Duration(rs[0].HeartbeatTick) * 3)
+		// wait for election timeout to fail
+		time.Sleep(
+			time.Duration(rs[0].ElectionTimeout[1])*time.Millisecond +
+				rs[0].HeartbeatTick*2)
 
-		nlead, _ := rs.waitForLeader(10 * time.Second)
+		nlead, nterm := rs.waitForLeader(10 * time.Second)
 		if lead == nullVotedFor {
 			t.Errorf("No leader re-elected after 10s: %s", rs)
+			rs.kill()
+			return
+		}
+		if nlead == lead || nterm == term {
+			t.Errorf("Expected new term/leader %d/%d", lead, term)
 			rs.kill()
 			return
 		}
@@ -89,7 +96,10 @@ func TestPeerInOutElection(t *testing.T) {
 		// TODO: reconnect rs[lead]; currently other peers
 		// won't re-dial down peers periodically, so this
 		// for now should fail.
-		nlead = nlead
+		//
+		// TODO: why don't RPC calls from peer to disconnected
+		// peer fails? (do we have an implicit timeout not getting
+		// hit yet?)
 
 		rs.kill()
 	}
