@@ -179,9 +179,10 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 						// term updated accordingly
 						currentTerm: r.currentTerm + 2,
 						// voted for the requester
-						votedFor: r.me + 3,
-						stopped:  r.stopped,
-						log:      r.log,
+						votedFor:        r.me + 3,
+						stopped:         r.stopped,
+						log:             r.log,
+						electionTimeout: r.electionTimeout,
 					},
 				},
 			},
@@ -252,9 +253,10 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 				state:       r.state,
 				currentTerm: r.currentTerm,
 				// voted for the requester
-				votedFor: r.me + 3,
-				stopped:  r.stopped,
-				log:      r.log,
+				votedFor:        r.me + 3,
+				stopped:         r.stopped,
+				log:             r.log,
+				electionTimeout: r.electionTimeout,
 			},
 		},
 	}})
