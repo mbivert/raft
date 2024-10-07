@@ -1,6 +1,3 @@
-/*
- * TODO: test with unreliable network
- */
 package main
 
 import (
@@ -19,6 +16,7 @@ func TestUnperturbatedElection(t *testing.T) {
 	for _, peers := range peerss {
 		rs, start, err := NewRafts(&Config{
 			Peers:           peers,
+			RPCTimeout:      500 * time.Millisecond,
 			ElectionTimeout: [2]int64{150, 300},
 			ElectionTick:    20 * time.Millisecond,
 			HeartbeatTick:   20 * time.Millisecond,
@@ -55,6 +53,7 @@ func TestLeadInOutElection(t *testing.T) {
 	for _, peers := range peerss {
 		rs, start, err := NewRafts(&Config{
 			Peers:           peers,
+			RPCTimeout:      500 * time.Millisecond,
 			ElectionTimeout: [2]int64{150, 300},
 			ElectionTick:    20 * time.Millisecond,
 			HeartbeatTick:   20 * time.Millisecond,

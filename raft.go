@@ -1,5 +1,9 @@
 package main
 
+// TODO: use a prefix to tag functions assuming the Raft
+// to be locked (we currently use l to indicate variants
+// which locks the Raft, which we may want to change as well).
+
 import (
 	"fmt"
 	"log/slog"
@@ -20,7 +24,7 @@ type Config struct {
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
 
-	Testing         bool          // internal: enable specific code for tests
+	Testing bool // internal: enable specific code for tests
 }
 
 // time.ParseDuration()
@@ -109,6 +113,9 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 		}
 
 		// wait for everyone to be connected to everyone
+		// TODO/XXX: we should now be able to remove this,
+		// as our Rafts are more resilient to unconnected
+		// peers. A few tests wouldn't hurt.
 		ready <- nil
 
 		// Start running the timer
@@ -140,6 +147,10 @@ func (r *Raft) kill() error {
 	// TODO: .Lock() for all our slog.Debug() :-/
 	slog.Debug("kill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 
+	r.Lock()
+	r.state = Down
+	r.Unlock()
+
 	r.stop()
 
 	// stop RPC server
@@ -147,10 +158,18 @@ func (r *Raft) kill() error {
 }
 
 func (r *Raft) unkill() error {
+	slog.Debug("unkill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Lock()
 	r.stopped = make(chan struct{})
+	r.Unlock()
 
-	// stop RPC server
-	return r.connect()
+	// restart RPC server
+	if err := r.connect(); err != nil {
+		return err
+	}
+
+	go r.runElectionTimer()
+	return nil
 }
 
 // tear down the RPC server
@@ -169,6 +188,9 @@ func (r *Raft) disconnect() error {
 // setup the RPC server
 func (r *Raft) connect() (err error) {
 	slog.Debug("connect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+
+	r.Lock()
+	defer r.Unlock()
 
 	r.server = rpc.NewServer()
 
@@ -207,21 +229,31 @@ func (r *Raft) rudeAccept() {
 	var mu sync.Mutex
 	var cs map[net.Conn]bool = make(map[net.Conn]bool)
 
+	// NOTE: this is to avoid a race with connect(), as
+	// r.server might be updated under our nose.
+	r.Lock()
+	serv := r.server
+	r.Unlock()
+
 	for {
+		r.Lock()
 		select {
 		case <-r.stopped:
+			r.Unlock()
 			mu.Lock()
 			for conn := range cs {
 				if err := conn.Close(); err != nil {
 					slog.Debug("rudeAccept.Close: "+err.Error(),
-					"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+						"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 				}
 			}
 			mu.Unlock()
 			wg.Wait()
 			return
 		default:
+			r.Unlock()
 		}
+
 		conn, err := r.listener.Accept()
 		if err != nil {
 			slog.Debug("rudeAccept.Accept: "+err.Error(),
@@ -234,7 +266,7 @@ func (r *Raft) rudeAccept() {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				r.server.ServeConn(conn)
+				serv.ServeConn(conn)
 				mu.Lock()
 				delete(cs, conn)
 				mu.Unlock()
@@ -255,16 +287,34 @@ func (r *Raft) forEachPeer(f func(int) error) error {
 	return nil
 }
 
+func (r *Raft) lConnectPeer(peer int) (err error) {
+	r.Lock()
+	defer r.Unlock()
+	return r.connectPeer(peer)
+}
+
+
+func (r *Raft) connectPeer(peer int) (err error) {
+	r.cpeers[peer], err = rpc.Dial("tcp", r.Peers[peer])
+	return err
+}
+
+func (r *Raft) reconnectPeer(peer int) (err error) {
+	r.Lock()
+	defer r.Unlock()
+
+	if r.cpeers[peer] != nil {
+		r.cpeers[peer].Close()
+	}
+
+	return r.connectPeer(peer)
+}
+
 // try to dial every peer
 func (r *Raft) connectPeers() error {
 	slog.Debug("connectPeers", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 
-	return r.forEachPeer(func(p int) (err error) {
-		if r.cpeers[p], err = rpc.Dial("tcp", r.Peers[p]); err != nil {
-			return err
-		}
-		return nil
-	})
+	return r.forEachPeer(r.lConnectPeer)
 }
 
 // assumes we're locked
@@ -296,6 +346,9 @@ func (r *Raft) toFollower(term int) {
 // term (r.currentTerm) is different, they can safely stop running
 
 func (r *Raft) shouldStop() bool {
+	r.Lock()
+	defer r.Unlock()
+
 	select {
 	case <-r.stopped:
 		return true
@@ -382,8 +435,14 @@ type voteCounter struct {
 }
 
 func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
-	// TODO: RPCs timeouts
-	reply := r.callRequestVote(term, peer)
+	reply, err := r.callRequestVote(term, peer)
+
+	// Most likely, peer cannot be reached
+	if err != nil {
+		slog.Debug("requestVote: "+err.Error(), "from", r.me,
+			"to", peer, "port", r.Peers[r.me], "term", term)
+		return
+	}
 
 	if reply.VoteGranted {
 		vc.Lock()

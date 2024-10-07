@@ -313,6 +313,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		Peers:           []string{":6767", ":6868"},
 		ElectionTick:    20 * time.Millisecond,
 		ElectionTimeout: [2]int64{150, 300},
+		RPCTimeout:      500 * time.Millisecond,
 	})
 	if err != nil {
 		t.Errorf(err.Error())
@@ -349,6 +350,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 					Term:    r1.currentTerm,
 					Success: false,
 				},
+				nil,
 			},
 		},
 		{
@@ -363,6 +365,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 					Term:    r1t + 1,
 					Success: true,
 				},
+				nil,
 			},
 		},
 	})
