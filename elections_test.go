@@ -46,7 +46,7 @@ func TestUnperturbatedElection(t *testing.T) {
 	}
 }
 
-func TestPeerInOutElection(t *testing.T) {
+func TestLeadInOutElection(t *testing.T) {
 	peerss := [][]string{
 		[]string{":6767", ":6868", ":6969"},
 		[]string{":6767", ":6868", ":6969", ":7070", ":7171"},
@@ -58,6 +58,7 @@ func TestPeerInOutElection(t *testing.T) {
 			ElectionTimeout: [2]int64{150, 300},
 			ElectionTick:    20 * time.Millisecond,
 			HeartbeatTick:   20 * time.Millisecond,
+			Testing:         true,
 		})
 		if err != nil {
 			t.Errorf(err.Error())
@@ -74,7 +75,11 @@ func TestPeerInOutElection(t *testing.T) {
 			return
 		}
 
-		rs[lead].kill()
+		if err := rs[lead].kill(); err != nil {
+			t.Errorf("Failed to kill %d: %s", lead, err.Error())
+			rs.kill()
+			return
+		}
 
 		// wait for election timeout to fail
 		time.Sleep(
@@ -93,13 +98,17 @@ func TestPeerInOutElection(t *testing.T) {
 			return
 		}
 
-		// TODO: reconnect rs[lead]; currently other peers
-		// won't re-dial down peers periodically, so this
-		// for now should fail.
-		//
-		// TODO: why don't RPC calls from peer to disconnected
-		// peer fails? (do we have an implicit timeout not getting
-		// hit yet?)
+		rs[lead].unkill()
+
+		// This should be long enough for either rs[lead] to receive
+		// a heartbeat or convert back to follower.
+		time.Sleep(
+			time.Duration(rs[0].ElectionTimeout[1])*time.Millisecond +
+				rs[0].HeartbeatTick*2)
+
+		if rs[lead].lAt(term) {
+			t.Errorf("Ancient leader should have moved to new term")
+		}
 
 		rs.kill()
 	}

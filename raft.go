@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"net/rpc"
 	"os"
 	"sync"
@@ -20,6 +19,8 @@ type Config struct {
 	ElectionTick    time.Duration // check for election timeout periodically
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
+
+	Testing         bool          // internal: enable specific code for tests
 }
 
 // time.ParseDuration()
@@ -49,10 +50,9 @@ type Raft struct {
 	*Config
 
 	// RPC stuff
-	cpeers   []*rpc.Client  // connected/client for r.Peers
-	server   *rpc.Server    // our RPC server (for others to query us)
-	mux      *http.ServeMux // HTTP muxer associated to the server
-	listener net.Listener   // listener associatod to the server
+	cpeers   []*rpc.Client // connected/client for r.Peers
+	server   *rpc.Server   // our RPC server (for others to query us)
+	listener net.Listener  // listener associatod to the server
 
 	// Actual Raft state
 	me              int       // Raft.Confir.Peers[] id; command line argument
@@ -180,9 +180,67 @@ func (r *Raft) connect() (err error) {
 		return err
 	}
 
-	go r.server.Accept(r.listener)
+	go r.accept()
 
 	return nil
+}
+
+func (r *Raft) accept() {
+	if r.Testing {
+		r.rudeAccept()
+	} else {
+		r.niceAccept()
+	}
+}
+
+// For production code
+func (r *Raft) niceAccept() {
+	r.server.Accept(r.listener)
+}
+
+// A variant of niceAccept(), where we handle connections more finely.
+// It allows, in tests, to rudely disconnect a server, and check whether
+// other peers handle that well.
+func (r *Raft) rudeAccept() {
+	var wg sync.WaitGroup
+
+	var mu sync.Mutex
+	var cs map[net.Conn]bool = make(map[net.Conn]bool)
+
+	for {
+		select {
+		case <-r.stopped:
+			mu.Lock()
+			for conn := range cs {
+				if err := conn.Close(); err != nil {
+					slog.Debug("rudeAccept.Close: "+err.Error(),
+					"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+				}
+			}
+			mu.Unlock()
+			wg.Wait()
+			return
+		default:
+		}
+		conn, err := r.listener.Accept()
+		if err != nil {
+			slog.Debug("rudeAccept.Accept: "+err.Error(),
+				"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+		} else {
+			mu.Lock()
+			cs[conn] = true
+			mu.Unlock()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				r.server.ServeConn(conn)
+				mu.Lock()
+				delete(cs, conn)
+				mu.Unlock()
+			}()
+		}
+	}
 }
 
 // call f on every peer but ourselves
