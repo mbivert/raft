@@ -128,6 +128,8 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 	panic("unreachable")
 }
 
+// wrap a RPC call with a timeout; detect disconnected peer and try
+// to reconnect, eventually.
 func (r *Raft) tryCall(fn string, args any, reply any, peer int) error {
 	c := make(chan error, 1)
 

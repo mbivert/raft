@@ -22,9 +22,8 @@ func TestUnperturbatedElection(t *testing.T) {
 			HeartbeatTick:   20 * time.Millisecond,
 		})
 		if err != nil {
-			t.Errorf(err.Error())
 			rs.kill()
-			return
+			t.Fatalf(err.Error())
 		}
 
 		close(start)
@@ -60,8 +59,8 @@ func TestLeadInOutElection(t *testing.T) {
 			Testing:         true,
 		})
 		if err != nil {
-			t.Errorf(err.Error())
 			rs.kill()
+			t.Fatalf(err.Error())
 			return
 		}
 

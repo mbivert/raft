@@ -4,6 +4,7 @@
 package main
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 
@@ -16,7 +17,8 @@ func TestRstElectionTimeout(t *testing.T) {
 		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {
-		t.Errorf(err.Error())
+		rs.kill()
+		t.Fatalf(err.Error())
 	}
 
 	r := rs[0]
@@ -37,7 +39,8 @@ func TestRequestVote(t *testing.T) {
 		ElectionTimeout: [2]int64{150, 300},
 	})
 	if err != nil {
-		t.Errorf(err.Error())
+		rs.kill()
+		t.Fatalf(err.Error())
 	}
 
 	rs[0].currentTerm = 1
@@ -58,6 +61,53 @@ func TestRequestVote(t *testing.T) {
 			nil,
 		},
 	})
+
+	rs.kill()
+}
+
+func TestAddCmd(t *testing.T) {
+	rs, _, err := NewRafts(&Config{
+		Peers:           []string{":6767"},
+		ElectionTimeout: [2]int64{150, 300},
+	})
+	if err != nil {
+		rs.kill()
+		t.Fatalf(err.Error())
+	}
+
+	for _, state := range []State{Follower, Candidate} {
+		rs[0].state = state
+
+		ftests.Run(t, []ftests.Test{{
+			"can't add commands to " + state.String(),
+			rs[0].AddCmd,
+			[]any{
+				"foo",
+			},
+			[]any{false},
+		}})
+		if len(rs[0].log) != 0 {
+			t.Errorf("Log should still be empty")
+		}
+	}
+
+	rs[0].state = Leader
+
+	cmd := "foo"
+	ftests.Run(t, []ftests.Test{{
+		"can add commands to leader",
+		rs[0].AddCmd,
+		[]any{
+			cmd,
+		},
+		[]any{true},
+	}})
+	e := &LogEntry{rs[0].currentTerm, cmd}
+	if len(rs[0].log) != 1 {
+		t.Errorf("Log entry should contain exactly one element, has %d", len(rs[0].log))
+	} else if !reflect.DeepEqual(rs[0].log[0], e) {
+		t.Errorf("Invalid log entry: %s vs %s", rs[0].log[0], e)
+	}
 
 	rs.kill()
 }

@@ -76,21 +76,21 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					Success: true,
 				},
 				&Raft{
-					Mutex:    r.Mutex,
-					Config:   r.Config,
-					me:       r.me,
-					cpeers:   r.cpeers,
-					listener: r.listener,
-					// Candidate → Follower
-					state: Follower,
-					// voted for the requester
-					// term updated accordingly
-					currentTerm: r.currentTerm + 2,
-					// reset
-					votedFor:        nullVotedFor,
-					stopped:         r.stopped,
-					log:             r.log,
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Follower,          // Candidate → Follower
+					currentTerm:     r.currentTerm + 2, // updated
+					votedFor:        nullVotedFor,      // reset
 					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					stopped:         r.stopped,
 				},
 				true,
 			},
@@ -180,14 +180,20 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 						currentTerm: r.currentTerm + 2,
 						// voted for the requester
 						votedFor:        r.me + 3,
-						stopped:         r.stopped,
-						log:             r.log,
 						electionTimeout: r.electionTimeout,
+						log:             r.log,
+						commitIndex:     r.commitIndex,
+						lastApplied:     r.lastApplied,
+						nextIndex:       r.nextIndex,
+						matchIndex:      r.matchIndex,
+						stopped:         r.stopped,
 					},
 				},
 			},
 		})
 	}
+
+	r.kill()
 }
 
 func TestRequestVoteFromEqTerm(t *testing.T) {
@@ -245,18 +251,21 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 			},
 			// remember, the r below is the one at compile-time
 			&Raft{
-				Mutex:       r.Mutex,
-				Config:      r.Config,
-				cpeers:      r.cpeers,
-				listener:    r.listener,
-				me:          r.me,
-				state:       r.state,
-				currentTerm: r.currentTerm,
-				// voted for the requester
-				votedFor:        r.me + 3,
-				stopped:         r.stopped,
-				log:             r.log,
+				Mutex:           r.Mutex,
+				Config:          r.Config,
+				cpeers:          r.cpeers,
+				listener:        r.listener,
+				me:              r.me,
+				state:           r.state,
+				currentTerm:     r.currentTerm,
+				votedFor:        r.me + 3, // voted for the requester
 				electionTimeout: r.electionTimeout,
+				log:             r.log,
+				commitIndex:     r.commitIndex,
+				lastApplied:     r.lastApplied,
+				nextIndex:       r.nextIndex,
+				matchIndex:      r.matchIndex,
+				stopped:         r.stopped,
 			},
 		},
 	}})
@@ -300,6 +309,8 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 			r,
 		},
 	}})
+
+	r.kill()
 }
 
 func TestAppendEntries(t *testing.T) {
@@ -316,7 +327,8 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 		RPCTimeout:      500 * time.Millisecond,
 	})
 	if err != nil {
-		t.Errorf(err.Error())
+		rs.kill()
+		t.Fatalf(err.Error())
 	}
 	r0, r1 := rs[0], rs[1]
 

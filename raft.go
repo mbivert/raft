@@ -4,6 +4,8 @@ package main
 // to be locked (we currently use l to indicate variants
 // which locks the Raft, which we may want to change as well).
 
+// NOTE: functions prefixed by run* are expected to ran in a goroutine.
+
 import (
 	"fmt"
 	"log/slog"
@@ -21,6 +23,7 @@ type Config struct {
 	Peers           []string      // ip:port
 	HeartbeatTick   time.Duration // sending heartbeats periodically
 	ElectionTick    time.Duration // check for election timeout periodically
+	SendEntriesTick time.Duration // try sending entries periodically
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
 
@@ -33,8 +36,12 @@ type Config struct {
 // https://stackoverflow.com/questions/23330024/does-rpc-have-a-timeout-mechanism
 
 type LogEntry struct {
-	Data any
 	Term int
+	Cmd  any
+}
+
+func (e *LogEntry) String() string {
+	return fmt.Sprintf("[term:%d, cmd:'%s']", e.Term, e.Cmd)
 }
 
 type State int
@@ -58,14 +65,23 @@ type Raft struct {
 	server   *rpc.Server   // our RPC server (for others to query us)
 	listener net.Listener  // listener associatod to the server
 
-	// Actual Raft state
-	me              int       // Raft.Confir.Peers[] id; command line argument
-	state           State     // current state
-	currentTerm     int       // current term
+	// Raft state: general
+	me          int   // Raft.Confir.Peers[] id; command line argument
+	state       State // current state
+	currentTerm int   // current term
+
+	// Raft state: election
 	votedFor        int       // who we votedFor (eventually nullVotedFor)
 	electionTimeout time.Time // when to start a new election (!Leader)
 
-	log []*LogEntry
+	// Raft state: replication
+	log         []*LogEntry // current log
+	commitIndex int         // highest log entry known to be committed
+	lastApplied int         // highest log entry applied to the state machine
+
+	// Raft state: replication, leader-specific
+	nextIndex  []int // for each peer, index of the next log entry to send to
+	matchIndex []int // for each peer, highest log entry known to be replicated
 
 	// Channel to gracefully stop all long running goroutines:
 	// close to terminate everyone.
@@ -95,6 +111,15 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 	r.currentTerm = 0
 	r.votedFor = nullVotedFor
 
+	r.log = make([]*LogEntry, 0)
+	r.commitIndex = 0
+	r.lastApplied = 0
+
+	r.nextIndex = make([]int, len(c.Peers))
+	r.matchIndex = make([]int, len(c.Peers))
+
+	r.stopped = make(chan struct{})
+
 	r.rstElectionTimeout()
 
 	// NOTE/TODO: this is useful for current early tests, but
@@ -123,8 +148,6 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 
 		r.runElectionTimer()
 	}()
-
-	r.stopped = make(chan struct{})
 
 	slog.Debug("NewRaft", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
 
@@ -293,7 +316,6 @@ func (r *Raft) lConnectPeer(peer int) (err error) {
 	return r.connectPeer(peer)
 }
 
-
 func (r *Raft) connectPeer(peer int) (err error) {
 	r.cpeers[peer], err = rpc.Dial("tcp", r.Peers[peer])
 	return err
@@ -329,9 +351,20 @@ func (r *Raft) toLeader(term int) {
 	slog.Debug("toLeader", "me", r.me, "port", r.Peers[r.me],
 		"term", term)
 
-	// NOTE: we'll soon have more to do here
+	r.initIndexes()
 
-	go r.sendHeartbeats(term)
+	go r.runSendHeartbeats(term)
+	go r.runSendEntries(term)
+}
+
+// on the leader, (re-)initialize r.initIndex and r.matchIndex
+// assumes we're locked.
+func (r *Raft) initIndexes() {
+	r.forEachPeer(func(peer int) error {
+		r.nextIndex[peer] = len(r.log)
+		r.matchIndex[peer] = 0
+		return nil
+	})
 }
 
 // assumes we're locked
@@ -388,7 +421,7 @@ func (r *Raft) rstElectionTimeout() int64 {
 	return d
 }
 
-func (r *Raft) sendHeartbeats(term int) {
+func (r *Raft) runSendHeartbeats(term int) {
 	// I guess it's better to have a waitgroup collecting pending
 	// goroutines?
 	var wg sync.WaitGroup
@@ -527,9 +560,29 @@ func (r *Raft) runElectionTimer() {
 	}
 }
 
+func (r *Raft) runSendEntries(term int) {
+	for !r.shouldStop() && r.lAt(term) {
+		time.Sleep(r.SendEntriesTick)
+	}
+}
+
 // assumes we're locked (!) (for now, only used in tests,
 // when printing multiple Rafts at once: we want the state
 // of the group)
 func (r *Raft) String() string {
 	return fmt.Sprintf("peer:%d/state:%s/term:%d", r.me, r.state, r.currentTerm)
+}
+
+// Entry point to start storing data in a Raft cluster. The
+// data is encoded as a command for a state machine.
+func (r *Raft) AddCmd(cmd any) bool {
+	r.Lock()
+	defer r.Unlock()
+
+	if !r.is(Leader) {
+		return false
+	}
+
+	r.log = append(r.log, &LogEntry{r.currentTerm, cmd})
+	return true
 }
