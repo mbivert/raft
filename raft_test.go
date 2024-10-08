@@ -31,6 +31,8 @@ func TestRstElectionTimeout(t *testing.T) {
 				d, r.ElectionTimeout[0], r.ElectionTimeout[1])
 		}
 	}
+
+	rs.kill()
 }
 
 func TestRequestVote(t *testing.T) {
@@ -102,6 +104,7 @@ func TestAddCmd(t *testing.T) {
 		},
 		[]any{true},
 	}})
+
 	e := &LogEntry{rs[0].currentTerm, cmd}
 	if len(rs[0].log) != 1 {
 		t.Errorf("Log entry should contain exactly one element, has %d", len(rs[0].log))
