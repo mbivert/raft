@@ -36,7 +36,7 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 	r := NewRaft(&Config{
 		Peers:           []string{":0"},
 		ElectionTimeout: [2]int64{150, 300},
-	}, 0, make(chan struct{}), make(chan struct{}), make(chan error))
+	}, 0, make(chan struct{}), make(chan struct{}), make(chan error), make(chan any))
 	r.currentTerm = 1
 	r.votedFor = 42
 
@@ -90,6 +90,7 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					lastApplied:     r.lastApplied,
 					nextIndex:       r.nextIndex,
 					matchIndex:      r.matchIndex,
+					apply:           r.apply,
 					stopped:         r.stopped,
 				},
 				true,
@@ -102,7 +103,7 @@ func TestRequestVoteFromLowerTerm(t *testing.T) {
 	r := NewRaft(&Config{
 		Peers:           []string{":0"},
 		ElectionTimeout: [2]int64{150, 300},
-	}, 0, make(chan struct{}), make(chan struct{}), make(chan error))
+	}, 0, make(chan struct{}), make(chan struct{}), make(chan error), make(chan any))
 
 	rst := func(state State) {
 		r.state = state
@@ -140,7 +141,7 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 	r := NewRaft(&Config{
 		Peers:           []string{":0"},
 		ElectionTimeout: [2]int64{150, 300},
-	}, 0, make(chan struct{}), make(chan struct{}), make(chan error))
+	}, 0, make(chan struct{}), make(chan struct{}), make(chan error), make(chan any))
 
 	rst := func(state State) {
 		r.state = state
@@ -186,6 +187,7 @@ func TestRequestVoteFromHigherTerm(t *testing.T) {
 						lastApplied:     r.lastApplied,
 						nextIndex:       r.nextIndex,
 						matchIndex:      r.matchIndex,
+						apply:           r.apply,
 						stopped:         r.stopped,
 					},
 				},
@@ -200,7 +202,7 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 	r := NewRaft(&Config{
 		Peers:           []string{":0"},
 		ElectionTimeout: [2]int64{150, 300},
-	}, 0, make(chan struct{}), make(chan struct{}), make(chan error))
+	}, 0, make(chan struct{}), make(chan struct{}), make(chan error), make(chan any))
 
 	rst := func(state State, peer int, term int) {
 		r.state = state
@@ -265,6 +267,7 @@ func TestRequestVoteFromEqTerm(t *testing.T) {
 				lastApplied:     r.lastApplied,
 				nextIndex:       r.nextIndex,
 				matchIndex:      r.matchIndex,
+				apply:           r.apply,
 				stopped:         r.stopped,
 			},
 		},

@@ -83,6 +83,8 @@ type Raft struct {
 	nextIndex  []int // for each peer, index of the next log entry to send to
 	matchIndex []int // for each peer, highest log entry known to be replicated
 
+	apply chan<- any
+
 	// Channel to gracefully stop all long running goroutines:
 	// close to terminate everyone.
 	stopped chan struct{} // closed when stopped
@@ -97,8 +99,12 @@ func init() {
 
 // NOTE: The start channel is because we sometimes don't want
 // to really start the raft, e.g. while testing individual RPC
-// requests.
-func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error) *Raft {
+// requests. The ready channel is closed once all peers are connected
+// during tests (TODO: we may be able to get rid of it now)
+//
+// The apply channel is where we send committed commands.
+func NewRaft(c *Config, me int, setup,
+		start <-chan struct{}, ready chan<- error, apply chan<- any) *Raft {
 	var r Raft
 
 	r.Mutex = &sync.Mutex{}
@@ -118,6 +124,7 @@ func NewRaft(c *Config, me int, setup, start <-chan struct{}, ready chan<- error
 	r.nextIndex = make([]int, len(c.Peers))
 	r.matchIndex = make([]int, len(c.Peers))
 
+	r.apply   = apply
 	r.stopped = make(chan struct{})
 
 	r.rstElectionTimeout()
@@ -516,7 +523,9 @@ func (r *Raft) requestVotes(term int) {
 
 	// ¯\_(ツ)_/¯
 	if r.hasMajority(vc.count) {
+		r.Lock()
 		r.toLeader(term)
+		r.Unlock()
 		return
 	}
 

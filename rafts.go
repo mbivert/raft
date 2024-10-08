@@ -55,11 +55,13 @@ func (rs Rafts) String() string {
 func NewRafts(c *Config) (Rafts, chan<- struct{}, error) {
 	rafts := make([]*Raft, len(c.Peers))
 	readys := make([]chan error, len(c.Peers))
+	applys := make([]chan any, len(c.Peers))
 	setup, start := make(chan struct{}), make(chan struct{})
 
 	for i := range rafts {
 		readys[i] = make(chan error)
-		rafts[i] = NewRaft(c, i, setup, start, readys[i])
+		applys[i] = make(chan any)
+		rafts[i] = NewRaft(c, i, setup, start, readys[i], applys[i])
 
 		if err := rafts[i].connect(); err != nil {
 			return rafts, start, err
