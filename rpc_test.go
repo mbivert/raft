@@ -359,6 +359,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 			[]any{
 				r1.currentTerm - 1,
 				r1.me,
+				[]*LogEntry{},
 			},
 			[]any{
 				&AppendEntriesReply{
@@ -374,6 +375,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 			[]any{
 				r1.currentTerm + 1,
 				r1.me,
+				[]*LogEntry{},
 			},
 			[]any{
 				&AppendEntriesReply{

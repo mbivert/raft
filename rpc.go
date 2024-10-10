@@ -13,6 +13,7 @@ import (
 type AppendEntriesArgs struct {
 	Term     int
 	LeaderId int
+	Entries  []*LogEntry
 }
 
 type AppendEntriesReply struct {
@@ -125,6 +126,10 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 		}
 	}
 
+
+	slog.Debug("RequestVote", "me", r.me, "port", r.Peers[r.me],
+		"term", r.currentTerm, "state", r.state.String(), "voted", r.votedFor)
+
 	panic("unreachable")
 }
 
@@ -171,11 +176,12 @@ func (r *Raft) tryCall(fn string, args any, reply any, peer int) error {
 	panic("unreachable")
 }
 
-func (r *Raft) callAppendEntries(term, peer int) (*AppendEntriesReply, error) {
+func (r *Raft) callAppendEntries(term, peer int, entries []*LogEntry) (*AppendEntriesReply, error) {
 	var reply AppendEntriesReply
 	args := AppendEntriesArgs{
 		Term:     term,
 		LeaderId: r.me,
+		Entries:  entries,
 	}
 
 	return &reply, r.tryCall("Raft.AppendEntries", &args, &reply, peer)

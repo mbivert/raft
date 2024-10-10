@@ -33,7 +33,7 @@ func TestUnperturbatedElection(t *testing.T) {
 		// somewhat arbitrary
 		time.Sleep(time.Duration(rs[0].ElectionTimeout[1]) * time.Millisecond)
 
-		// XXX this sometimes still fail (go test -v -race . -count 20 -failfast);
+		// XXX this sometimes still fails (go test -v -race . -count 20 -failfast);
 		// the practical impact should be negligible though: we're stable enough.
 		if x := rs.getLeader(); lead != x {
 			t.Errorf("Network is stable: leader shouldn't have changed: %d ≠ %d", lead, x)

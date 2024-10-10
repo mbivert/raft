@@ -3,8 +3,10 @@ package main
 // TODO: use a prefix to tag functions assuming the Raft
 // to be locked (we currently use l to indicate variants
 // which locks the Raft, which we may want to change as well).
-
+//
 // NOTE: functions prefixed by run* are expected to ran in a goroutine.
+//
+// NOTE: all our indexes start from 0 (matchIndex, nextIndex, etc.)
 
 import (
 	"fmt"
@@ -24,6 +26,7 @@ type Config struct {
 	HeartbeatTick   time.Duration // sending heartbeats periodically
 	ElectionTick    time.Duration // check for election timeout periodically
 	SendEntriesTick time.Duration // try sending entries periodically
+	ApplyTick       time.Duration // try applying committed entries periodically
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
 
@@ -150,10 +153,13 @@ func NewRaft(c *Config, me int, setup,
 		// peers. A few tests wouldn't hurt.
 		ready <- nil
 
-		// Start running the timer
+		// Start running the timers
 		<-start
 
-		r.runElectionTimer()
+		go r.runElectionTimer()
+		// XXX this seems to mess things up sometimes: we reach the
+		// unreachable branch of r.RequestVote().
+		go r.runApplyTimer()
 	}()
 
 	slog.Debug("NewRaft", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
@@ -175,7 +181,9 @@ func (r *Raft) stop() {
 // stopAndDisconnect()
 func (r *Raft) kill() error {
 	// TODO: .Lock() for all our slog.Debug() :-/
+	r.Lock()
 	slog.Debug("kill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Unlock()
 
 	r.Lock()
 	r.state = Down
@@ -188,7 +196,10 @@ func (r *Raft) kill() error {
 }
 
 func (r *Raft) unkill() error {
+	r.Lock()
 	slog.Debug("unkill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Unlock()
+
 	r.Lock()
 	r.stopped = make(chan struct{})
 	r.Unlock()
@@ -199,6 +210,8 @@ func (r *Raft) unkill() error {
 	}
 
 	go r.runElectionTimer()
+	go r.runApplyTimer()
+
 	return nil
 }
 
@@ -368,8 +381,12 @@ func (r *Raft) toLeader(term int) {
 // assumes we're locked.
 func (r *Raft) initIndexes() {
 	r.forEachPeer(func(peer int) error {
+		// assume r.log is empty: then the next log entry
+		// we'll one day have to send must be zero (nextIndex),
+		// and there couldn't be any entry replicated entry
+		// on that host (matchIndex)
 		r.nextIndex[peer] = len(r.log)
-		r.matchIndex[peer] = 0
+		r.matchIndex[peer] = -1
 		return nil
 	})
 }
@@ -441,10 +458,12 @@ func (r *Raft) runSendHeartbeats(term int) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				slog.Debug("sendHeartbeats", "from", r.me,
-					"to", peer, "port", r.Peers[r.me], "term", term)
+				slog.Debug("runSendHeartbeats", "from", r.me,
+					"to", peer, "port", r.Peers[peer], "term", term)
 
-				r.callAppendEntries(term, peer)
+				r.callAppendEntries(term, peer, []*LogEntry{})
+				// TODO: in case of failure and when reply.Term > term,
+				// we should give up?
 			}()
 			return nil
 		})
@@ -553,24 +572,125 @@ func (r *Raft) startElection() {
 	go r.requestVotes(r.currentTerm)
 }
 
+// assumes we're locked
+func (r *Raft) maybeStartElection() bool {
+	if r.shouldStartElection() {
+		r.startElection()
+		return true
+	}
+	return false
+}
+
 func (r *Raft) runElectionTimer() {
+	r.Lock()
 	slog.Debug("runElectionTimer", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Unlock()
 
 	for !r.shouldStop() {
 		r.Lock()
-
-		if r.shouldStartElection() {
-			r.startElection()
-		}
-
+		r.maybeStartElection()
 		r.Unlock()
 
 		time.Sleep(r.ElectionTick)
 	}
 }
 
+// assumes we're locked
+func (r *Raft) maybeApply() bool {
+	if r.commitIndex > r.lastApplied {
+		r.lastApplied++
+		r.apply <- r.log[r.lastApplied]
+		return true
+	}
+	return false
+}
+
+func (r *Raft) runApplyTimer() {
+	r.Lock()
+	slog.Debug("runApplyTimer", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Unlock()
+
+	for !r.shouldStop() {
+		r.Lock()
+		r.maybeApply()
+		r.Unlock()
+
+		time.Sleep(r.ApplyTick)
+	}
+}
+
+func (r *Raft) sendEntries1(term, peer int) {
+	r.Lock()
+	defer r.Unlock()
+
+	// This should never happen (well, perhaps it'll happen at some
+	// point when we get out of sync? for now at least, consider it
+	// a fatal error)
+	if len(r.log) < r.nextIndex[peer] {
+		panic("assert")
+	}
+
+	// all entries are replicated iff len(r.log) == r.nextIndex[peer];
+	if len(r.log) == r.nextIndex[peer] {
+		return
+	}
+
+	// so there's something to send iff len(r.log) > r.nextIndex[peer].
+	if len(r.log) > r.nextIndex[peer] {
+		entries := r.log[r.nextIndex[peer]:]
+		reply, err := r.callAppendEntries(term, peer, entries)
+
+		// peer unreacheable atm (most likely)
+		if err != nil {
+			slog.Debug("sendEntries1: "+err.Error(), "from", r.me,
+				"to", peer, "port", r.Peers[r.me], "term", term)
+			return
+		}
+
+		if reply.Success {
+			r.nextIndex[peer] = len(r.log)
+			r.matchIndex[peer] = len(r.log)-1
+			return
+		}
+		if !reply.Success {
+			if reply.Term > term {
+				r.toFollower(reply.Term)
+				return
+			}
+
+			// This shouldn't happen. Not really a fatal issue,
+			// but it means something is poorly wired somewhere.
+			if reply.Term < term {
+				panic("assert")
+			}
+
+			if reply.Term == term {
+				r.nextIndex[peer]--
+
+				// Again, something is poorly wired somewhere
+				if r.nextIndex[peer] < 0 {
+					panic("assert")
+				}
+				// a goto wouldn't release the lock; not such
+				// a bad idea to eventually give room for someone
+				// else to move forward.
+				r.sendEntries1(term, peer)
+			}
+
+			return
+		}
+		return
+	}
+
+	panic("unreachable")
+}
+
 func (r *Raft) runSendEntries(term int) {
 	for !r.shouldStop() && r.lAt(term) {
+		r.forEachPeer(func(peer int) error {
+			r.sendEntries1(term, peer)
+			return nil
+		})
 		time.Sleep(r.SendEntriesTick)
 	}
 }
