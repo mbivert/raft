@@ -159,7 +159,7 @@ func NewRaft(c *Config, me int, setup,
 		go r.runElectionTimer()
 		// XXX this seems to mess things up sometimes: we may reach the
 		// unreachable branch of r.RequestVote() for example.
-		go r.runApplyTimer()
+//		go r.runApplyTimer()
 	}()
 
 	slog.Debug("NewRaft", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
@@ -210,7 +210,7 @@ func (r *Raft) unkill() error {
 	}
 
 	go r.runElectionTimer()
-	go r.runApplyTimer()
+//	go r.runApplyTimer()
 
 	return nil
 }
@@ -374,7 +374,7 @@ func (r *Raft) toLeader(term int) {
 	r.initIndexes()
 
 	go r.runSendHeartbeats(term)
-	go r.runSendEntries(term)
+//	go r.runSendEntries(term)
 }
 
 // on the leader, (re-)initialize r.initIndex and r.matchIndex
@@ -619,6 +619,8 @@ func (r *Raft) runApplyTimer() {
 	}
 }
 
+// TODO: try merging sendEntries1() with runSendHeartbeats(): the
+// network is less stable since we introduced sendEntries1()
 func (r *Raft) sendEntries1(term, peer int) {
 	r.Lock()
 	defer r.Unlock()

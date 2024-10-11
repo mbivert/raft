@@ -101,6 +101,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 	if args.Term > r.currentTerm {
 		r.toFollower(args.Term)
 		r.votedFor = args.CandidateId
+		// r.rstElectionTimeout()
 
 		reply.Term = r.currentTerm
 		reply.VoteGranted = true
@@ -126,6 +127,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 		if r.is(Follower) {
 			if r.votedFor == nullVotedFor || r.votedFor == args.CandidateId {
 				r.votedFor = args.CandidateId
+				// r.rstElectionTimeout()
 
 				reply.Term = r.currentTerm
 				reply.VoteGranted = true
