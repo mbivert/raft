@@ -7,6 +7,12 @@ package main
 // NOTE: functions prefixed by run* are expected to ran in a goroutine.
 //
 // NOTE: all our indexes start from 0 (matchIndex, nextIndex, etc.)
+//
+// NOTE: in logging:
+//	- "term" is the current term
+//	- "lterm" is the local term (for long-running goroutines spawn
+//	only for a specific term and expected to shutdown once said term ends)
+//	- "aterm" is the argument term, for RPCs.
 
 import (
 	"fmt"
@@ -59,6 +65,8 @@ const (
 
 const nullVotedFor = -1
 
+var lgr *slog.Logger
+
 type Raft struct {
 	*sync.Mutex
 	*Config
@@ -96,8 +104,25 @@ type Raft struct {
 func init() {
 	var programLevel = new(slog.LevelVar)
 	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel})
-	slog.SetDefault(slog.New(h))
+	lgr = slog.New(h)
+	slog.SetDefault(lgr)
 	programLevel.Set(slog.LevelDebug)
+}
+
+func (r *Raft) Debug(lgr *slog.Logger, msg string, args ...any) {
+	xargs := []any{"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm,
+		"state", r.state.String()}
+
+	xargs = append(xargs, args...)
+
+	lgr.Debug(msg, xargs...)
+}
+
+func (r *Raft) lDebug(lgr *slog.Logger, msg string, args ...any) {
+	r.Lock()
+	defer r.Unlock()
+
+    r.Debug(lgr, msg, args...)
 }
 
 // NOTE: The start channel is because we sometimes don't want
@@ -162,14 +187,14 @@ func NewRaft(c *Config, me int, setup,
 //		go r.runApplyTimer()
 	}()
 
-	slog.Debug("NewRaft", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.lDebug(lgr, "NewRaft")
 
 	return &r
 }
 
 // stop long-running goroutines; Guards against double stop()/kill()
 func (r *Raft) stop() {
-	slog.Debug("stop", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.lDebug(lgr, "stop")
 
 	select {
 	case <-r.stopped:
@@ -180,12 +205,8 @@ func (r *Raft) stop() {
 
 // stopAndDisconnect()
 func (r *Raft) kill() error {
-	// TODO: .Lock() for all our slog.Debug() :-/
 	r.Lock()
-	slog.Debug("kill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
-	r.Unlock()
-
-	r.Lock()
+	r.Debug(lgr, "kill")
 	r.state = Down
 	r.Unlock()
 
@@ -197,10 +218,7 @@ func (r *Raft) kill() error {
 
 func (r *Raft) unkill() error {
 	r.Lock()
-	slog.Debug("unkill", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
-	r.Unlock()
-
-	r.Lock()
+	r.Debug(lgr, "unkill")
 	r.stopped = make(chan struct{})
 	r.Unlock()
 
@@ -217,7 +235,10 @@ func (r *Raft) unkill() error {
 
 // tear down the RPC server
 func (r *Raft) disconnect() error {
-	slog.Debug("disconnect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Lock()
+	defer r.Unlock()
+
+	r.Debug(lgr, "disconnect")
 
 	// a Raft can be created without a working listener.
 	// when building a Rafts, we'll try to blindly tear
@@ -230,10 +251,10 @@ func (r *Raft) disconnect() error {
 
 // setup the RPC server
 func (r *Raft) connect() (err error) {
-	slog.Debug("connect", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
-
 	r.Lock()
 	defer r.Unlock()
+
+	r.Debug(lgr, "connect")
 
 	r.server = rpc.NewServer()
 
@@ -286,8 +307,7 @@ func (r *Raft) rudeAccept() {
 			mu.Lock()
 			for conn := range cs {
 				if err := conn.Close(); err != nil {
-					slog.Debug("rudeAccept.Close: "+err.Error(),
-						"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+					r.Debug(lgr, "rudeAccept.Close: "+err.Error())
 				}
 			}
 			mu.Unlock()
@@ -299,8 +319,7 @@ func (r *Raft) rudeAccept() {
 
 		conn, err := r.listener.Accept()
 		if err != nil {
-			slog.Debug("rudeAccept.Accept: "+err.Error(),
-				"me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+			r.lDebug(lgr, "rudeAccept.Accept: "+err.Error())
 		} else {
 			mu.Lock()
 			cs[conn] = true
@@ -354,7 +373,7 @@ func (r *Raft) reconnectPeer(peer int) (err error) {
 
 // try to dial every peer
 func (r *Raft) connectPeers() error {
-	slog.Debug("connectPeers", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.lDebug(lgr, "connectPeers")
 
 	return r.forEachPeer(r.lConnectPeer)
 }
@@ -368,8 +387,7 @@ func (r *Raft) is(state State) bool {
 func (r *Raft) toLeader(term int) {
 	r.state = Leader
 
-	slog.Debug("toLeader", "me", r.me, "port", r.Peers[r.me],
-		"term", term)
+	r.Debug(lgr, "toLeader", "lterm", term)
 
 	r.initIndexes()
 
@@ -458,8 +476,8 @@ func (r *Raft) runSendHeartbeats(term int) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				slog.Debug("runSendHeartbeats", "from", r.me,
-					"to", peer, "port", r.Peers[peer], "term", term)
+				r.lDebug(lgr, "runSendHeartbeats",
+					"to", peer, "rport", r.Peers[peer])
 
 				r.callAppendEntries(term, peer, []*LogEntry{})
 				// TODO: in case of failure and when reply.Term > term,
@@ -498,8 +516,9 @@ func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
 
 	// Most likely, peer cannot be reached
 	if err != nil {
-		slog.Debug("requestVote: "+err.Error(), "from", r.me,
-			"to", peer, "port", r.Peers[r.me], "term", term)
+		r.lDebug(lgr, "requestVote: "+err.Error(), "to", peer,
+			"rport", r.Peers[peer], "lterm", term)
+
 		return
 	}
 
@@ -567,7 +586,7 @@ func (r *Raft) startElection() {
 	r.votedFor = r.me
 	r.currentTerm++
 
-	slog.Debug("startElection", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
+	r.Debug(lgr, "startElection")
 
 	go r.requestVotes(r.currentTerm)
 }
@@ -582,9 +601,7 @@ func (r *Raft) maybeStartElection() bool {
 }
 
 func (r *Raft) runElectionTimer() {
-	r.Lock()
-	slog.Debug("runElectionTimer", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
-	r.Unlock()
+	r.lDebug(lgr, "runElectionTimer")
 
 	for !r.shouldStop() {
 		r.Lock()
@@ -606,9 +623,7 @@ func (r *Raft) maybeApply() bool {
 }
 
 func (r *Raft) runApplyTimer() {
-	r.Lock()
-	slog.Debug("runApplyTimer", "me", r.me, "port", r.Peers[r.me], "term", r.currentTerm)
-	r.Unlock()
+	r.Debug(lgr, "runApplyTimer")
 
 	for !r.shouldStop() {
 		r.Lock()
@@ -644,8 +659,8 @@ func (r *Raft) sendEntries1(term, peer int) {
 
 		// peer unreacheable atm (most likely)
 		if err != nil {
-			slog.Debug("sendEntries1: "+err.Error(), "from", r.me,
-				"to", peer, "port", r.Peers[r.me], "term", term)
+			r.Debug(lgr, "sendEntries1: "+err.Error(),
+				"to", peer, "rport", r.Peers[peer], "lterm", term)
 			return
 		}
 

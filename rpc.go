@@ -6,7 +6,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 )
 
@@ -35,8 +34,7 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	r.Lock()
 	defer r.Unlock()
 
-	slog.Debug("AppendEntries", "from", args.LeaderId, "me", r.me,
-		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
+	r.Debug(lgr, "AppendEntries", "leader", args.LeaderId, "aterm", args.Term)
 
 	// In the process of being shutdown
 	if r.is(Down) {
@@ -80,8 +78,7 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 	r.Lock()
 	defer r.Unlock()
 
-	slog.Debug("RequestVote", "from", args.CandidateId, "me", r.me,
-		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
+	r.Debug(lgr, "RequestVote", "candidate", args.CandidateId, "aterm", args.Term)
 
 	// In the process of being shutdown
 	if r.is(Down) {
@@ -157,17 +154,11 @@ func (r *Raft) tryCall(fn string, args any, reply any, peer int) error {
 	r.Unlock()
 
 	go func() {
-		// slog.Debug("tryCall.start."+fn, "me", r.me, "to", peer,
-		// 	"port", r.Peers[r.me], "term", r.currentTerm)
-
 		if cl != nil {
 			c <- cl.Call(fn, args, reply)
 		} else {
 			c <- fmt.Errorf("Peer not connected")
 		}
-
-		// slog.Debug("tryCall.end."+fn, "me", r.me, "to", peer,
-		// 	"port", r.Peers[r.me], "term", r.currentTerm)
 	}()
 
 	select {
