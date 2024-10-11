@@ -38,6 +38,14 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 	slog.Debug("AppendEntries", "from", args.LeaderId, "me", r.me,
 		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
 
+	// In the process of being shutdown
+	if r.is(Down) {
+		reply.Term = r.currentTerm
+		reply.Success = false
+
+		return nil
+	}
+
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
 		reply.Success = false
@@ -74,6 +82,14 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 
 	slog.Debug("RequestVote", "from", args.CandidateId, "me", r.me,
 		"port", r.Peers[r.me], "term", r.currentTerm, "rterm", args.Term)
+
+	// In the process of being shutdown
+	if r.is(Down) {
+		reply.Term = r.currentTerm
+		reply.VoteGranted = false
+
+		return nil
+	}
 
 	if args.Term < r.currentTerm {
 		reply.Term = r.currentTerm
@@ -125,10 +141,6 @@ func (r *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error
 			}
 		}
 	}
-
-
-	slog.Debug("RequestVote", "me", r.me, "port", r.Peers[r.me],
-		"term", r.currentTerm, "state", r.state.String(), "voted", r.votedFor)
 
 	panic("unreachable")
 }
