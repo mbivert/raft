@@ -121,8 +121,8 @@ func NewRaft(c *Config, me int, setup,
 	r.votedFor = nullVotedFor
 
 	r.log = make([]*LogEntry, 0)
-	r.commitIndex = 0
-	r.lastApplied = 0
+	r.commitIndex = -1
+	r.lastApplied = -1
 
 	r.nextIndex = make([]int, len(c.Peers))
 	r.matchIndex = make([]int, len(c.Peers))
@@ -157,8 +157,8 @@ func NewRaft(c *Config, me int, setup,
 		<-start
 
 		go r.runElectionTimer()
-		// XXX this seems to mess things up sometimes: we reach the
-		// unreachable branch of r.RequestVote().
+		// XXX this seems to mess things up sometimes: we may reach the
+		// unreachable branch of r.RequestVote() for example.
 		go r.runApplyTimer()
 	}()
 
