@@ -128,7 +128,8 @@ func (r *Raft) lDebug(lgr *slog.Logger, msg string, args ...any) {
 // NOTE: The start channel is because we sometimes don't want
 // to really start the raft, e.g. while testing individual RPC
 // requests. The ready channel is closed once all peers are connected
-// during tests (TODO: we may be able to get rid of it now)
+// to each others during tests (TODO: we may be able to get rid of
+// it now)
 //
 // The apply channel is where we send committed commands.
 func NewRaft(c *Config, me int, setup,
@@ -182,9 +183,7 @@ func NewRaft(c *Config, me int, setup,
 		<-start
 
 		go r.runElectionTimer()
-		// XXX this seems to mess things up sometimes: we may reach the
-		// unreachable branch of r.RequestVote() for example.
-//		go r.runApplyTimer()
+		go r.runApplyTimer()
 	}()
 
 	r.lDebug(lgr, "NewRaft")
@@ -192,7 +191,7 @@ func NewRaft(c *Config, me int, setup,
 	return &r
 }
 
-// stop long-running goroutines; Guards against double stop()/kill()
+// stop long-running goroutines; guard against double stop()/kill()
 func (r *Raft) stop() {
 	r.lDebug(lgr, "stop")
 
@@ -228,7 +227,7 @@ func (r *Raft) unkill() error {
 	}
 
 	go r.runElectionTimer()
-//	go r.runApplyTimer()
+	go r.runApplyTimer()
 
 	return nil
 }
@@ -623,7 +622,7 @@ func (r *Raft) maybeApply() bool {
 }
 
 func (r *Raft) runApplyTimer() {
-	r.Debug(lgr, "runApplyTimer")
+	r.lDebug(lgr, "runApplyTimer")
 
 	for !r.shouldStop() {
 		r.Lock()
