@@ -122,7 +122,14 @@ func (r *Raft) lDebug(lgr *slog.Logger, msg string, args ...any) {
 	r.Lock()
 	defer r.Unlock()
 
-    r.Debug(lgr, msg, args...)
+	r.Debug(lgr, msg, args...)
+}
+
+func (r *Raft) lGetTerm() int {
+	r.Lock()
+	defer r.Unlock()
+
+	return r.currentTerm
 }
 
 // NOTE: The start channel is because we sometimes don't want
@@ -133,7 +140,7 @@ func (r *Raft) lDebug(lgr *slog.Logger, msg string, args ...any) {
 //
 // The apply channel is where we send committed commands.
 func NewRaft(c *Config, me int, setup,
-		start <-chan struct{}, ready chan<- error, apply chan<- any) *Raft {
+	start <-chan struct{}, ready chan<- error, apply chan<- any) *Raft {
 	var r Raft
 
 	r.Mutex = &sync.Mutex{}
@@ -153,7 +160,7 @@ func NewRaft(c *Config, me int, setup,
 	r.nextIndex = make([]int, len(c.Peers))
 	r.matchIndex = make([]int, len(c.Peers))
 
-	r.apply   = apply
+	r.apply = apply
 	r.stopped = make(chan struct{})
 
 	r.rstElectionTimeout()
@@ -391,7 +398,7 @@ func (r *Raft) toLeader(term int) {
 	r.initIndexes()
 
 	go r.runSendHeartbeats(term)
-//	go r.runSendEntries(term)
+	// go r.runSendEntries(term)
 }
 
 // on the leader, (re-)initialize r.initIndex and r.matchIndex
@@ -635,7 +642,7 @@ func (r *Raft) runApplyTimer() {
 
 // TODO: try merging sendEntries1() with runSendHeartbeats(): the
 // network is less stable since we introduced sendEntries1()
-func (r *Raft) sendEntries1(term, peer int) {
+func (r *Raft) sendEntries1(term, peer int) bool {
 	r.Lock()
 	defer r.Unlock()
 
@@ -648,30 +655,36 @@ func (r *Raft) sendEntries1(term, peer int) {
 
 	// all entries are replicated iff len(r.log) == r.nextIndex[peer];
 	if len(r.log) == r.nextIndex[peer] {
-		return
+		return false
 	}
 
 	// so there's something to send iff len(r.log) > r.nextIndex[peer].
 	if len(r.log) > r.nextIndex[peer] {
 		entries := r.log[r.nextIndex[peer]:]
+
+		// XXX unclear: we need to lock at some point in callAppendEntries
+		// XXX there's probably a race, as entries contain a shallow copy of r.log
+		r.Unlock()
 		reply, err := r.callAppendEntries(term, peer, entries)
+		r.Lock()
 
 		// peer unreacheable atm (most likely)
 		if err != nil {
 			r.Debug(lgr, "sendEntries1: "+err.Error(),
 				"to", peer, "rport", r.Peers[peer], "lterm", term)
-			return
+			return false
 		}
 
 		if reply.Success {
 			r.nextIndex[peer] = len(r.log)
-			r.matchIndex[peer] = len(r.log)-1
-			return
+			r.matchIndex[peer] = len(r.log) - 1
+			return true
 		}
+
 		if !reply.Success {
 			if reply.Term > term {
 				r.toFollower(reply.Term)
-				return
+				return false
 			}
 
 			// This shouldn't happen. Not really a fatal issue,
@@ -687,15 +700,13 @@ func (r *Raft) sendEntries1(term, peer int) {
 				if r.nextIndex[peer] < 0 {
 					panic("assert")
 				}
+
 				// a goto wouldn't release the lock; not such
 				// a bad idea to eventually give room for someone
 				// else to move forward.
-				r.sendEntries1(term, peer)
+				return r.sendEntries1(term, peer)
 			}
-
-			return
 		}
-		return
 	}
 
 	panic("unreachable")

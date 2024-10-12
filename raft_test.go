@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mbivert/ftests"
 )
@@ -111,6 +112,67 @@ func TestAddCmd(t *testing.T) {
 	} else if !reflect.DeepEqual(rs[0].log[0], e) {
 		t.Errorf("Invalid log entry: %s vs %s", rs[0].log[0], e)
 	}
+
+	rs.kill()
+}
+
+// TODO: return and test relevant r0/r1 state
+func tSendEntries1(r0, r1 *Raft) bool {
+	term := r0.lGetTerm()
+
+	return r0.sendEntries1(term, r1.me)
+}
+
+func TestSendEntries1(t *testing.T) {
+	rs, _, err := NewRafts(&Config{
+		Peers:           []string{":6767", ":6868"},
+		ElectionTimeout: [2]int64{150, 300},
+		RPCTimeout:      500 * time.Millisecond,
+	})
+	if err != nil {
+		rs.kill()
+		t.Fatalf(err.Error())
+	}
+
+	r0, r1 := rs[0], rs[1]
+
+	// XXX manual toLeader(): we don't want to send heartbeats
+	r0.Lock()
+	r0.state = Leader
+	r0.currentTerm = 1
+	r0.initIndexes()
+	r0.Unlock()
+
+	r1.toFollower(1)
+
+	ftests.Run(t, []ftests.Test{{
+		"no command to send",
+		tSendEntries1,
+		[]any{
+			r0,
+			r1,
+		},
+		[]any{
+			false,
+		},
+	}})
+
+	if !r0.AddCmd("first command") {
+		rs.kill()
+		t.Fatalf("Can't add command?!")
+	}
+
+	ftests.Run(t, []ftests.Test{{
+		"one command correctly sent",
+		tSendEntries1,
+		[]any{
+			r0,
+			r1,
+		},
+		[]any{
+			true,
+		},
+	}})
 
 	rs.kill()
 }

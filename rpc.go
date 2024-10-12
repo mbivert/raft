@@ -173,7 +173,7 @@ func (r *Raft) tryCall(fn string, args any, reply any, peer int) error {
 
 	case <-time.After(r.RPCTimeout):
 		return errors.Join(
-			fmt.Errorf("%d.%s timeout", peer, fn),
+			fmt.Errorf("peer %d timeout (%s)", peer, fn),
 			r.reconnectPeer(peer),
 		)
 	}
