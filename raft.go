@@ -611,6 +611,18 @@ type voteCounter struct {
 	elected bool
 }
 
+// assumes the vc to have been locked, eventually.
+func (r *Raft) maybeToLeader(term int, vc *voteCounter) {
+	r.Lock()
+	defer r.Unlock()
+
+	// unlikely, but better to guard anyway.
+	if r.at(term) && r.is(Candidate) {
+		vc.elected = true
+		r.toLeader(term)
+	}
+}
+
 func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
 	reply, err := r.callRequestVote(term, peer)
 
@@ -626,12 +638,7 @@ func (r *Raft) requestVote(term, peer int, vc *voteCounter) {
 		vc.Lock()
 		vc.count++
 		if !vc.elected && r.hasMajority(vc.count) {
-			r.Lock()
-			if r.at(term) && r.is(Candidate) {
-				vc.elected = true
-				r.toLeader(term)
-			}
-			r.Unlock()
+			r.maybeToLeader(term, vc)
 		}
 		vc.Unlock()
 
@@ -661,9 +668,7 @@ func (r *Raft) requestVotes(term int) {
 
 	// ¯\_(ツ)_/¯
 	if r.hasMajority(vc.count) {
-		r.Lock()
-		r.toLeader(term)
-		r.Unlock()
+		r.maybeToLeader(term, &vc)
 		return
 	}
 
