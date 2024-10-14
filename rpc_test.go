@@ -604,7 +604,7 @@ func TestAppendEntries(t *testing.T) {
 }
 
 // setup two peers, connect them, and perform
-// a genuine RPC call
+// genuine RPC calls
 func TestAppendHeartBeatRPC(t *testing.T) {
 	rs, _, err := NewRafts(&Config{
 		Peers:           []string{":6767", ":6868"},
@@ -642,7 +642,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 			[]any{
 				r1.currentTerm - 1,
 				r1.me,
-				[]*LogEntry{},
+				[]LogEntry{},
 			},
 			[]any{
 				&AppendEntriesReply{
@@ -658,7 +658,7 @@ func TestAppendHeartBeatRPC(t *testing.T) {
 			[]any{
 				r1.currentTerm + 1,
 				r1.me,
-				[]*LogEntry{},
+				[]LogEntry{},
 			},
 			[]any{
 				&AppendEntriesReply{

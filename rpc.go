@@ -12,7 +12,7 @@ import (
 type AppendEntriesArgs struct {
 	Term     int
 	LeaderId int
-	Entries  []*LogEntry
+	Entries  []LogEntry
 }
 
 type AppendEntriesReply struct {
@@ -206,7 +206,7 @@ func (r *Raft) tryCall(fn string, args any, reply any, peer int) error {
 	panic("unreachable")
 }
 
-func (r *Raft) callAppendEntries(term, peer int, entries []*LogEntry) (*AppendEntriesReply, error) {
+func (r *Raft) callAppendEntries(term, peer int, entries []LogEntry) (*AppendEntriesReply, error) {
 	var reply AppendEntriesReply
 	args := AppendEntriesArgs{
 		Term:     term,

@@ -50,7 +50,7 @@ type LogEntry struct {
 	Cmd   any
 }
 
-func (e *LogEntry) String() string {
+func (e LogEntry) String() string {
 	return fmt.Sprintf("[term:%d, index:%d, cmd:'%s']", e.Term, e.Index, e.Cmd)
 }
 
@@ -88,7 +88,7 @@ type Raft struct {
 	electionTimeout time.Time // when to start a new election (!Leader)
 
 	// Raft state: replication
-	log         []*LogEntry // current log
+	log         []LogEntry // current log
 	commitIndex int         // highest log entry known to be committed
 	lastApplied int         // highest log entry applied to the state machine
 
@@ -155,7 +155,7 @@ func NewRaft(c *Config, me int, setup,
 	r.currentTerm = 0
 	r.votedFor = nullVotedFor
 
-	r.log = make([]*LogEntry, 0)
+	r.log = make([]LogEntry, 0)
 	r.commitIndex = -1
 	r.lastApplied = -1
 
@@ -470,8 +470,9 @@ func (r *Raft) rstElectionTimeout() int64 {
 	return d
 }
 
-// assumes we're locked
-func (r *Raft) getEntriesFor(peer int) []*LogEntry {
+// assumes we're locked. returns a *copy* of a slice
+// of r.log.
+func (r *Raft) getEntriesFor(peer int) []LogEntry {
 	// This should never happen (well, perhaps it'll happen at some
 	// point when we get out of sync? for now at least, consider it
 	// a fatal error)
@@ -481,12 +482,18 @@ func (r *Raft) getEntriesFor(peer int) []*LogEntry {
 
 	// all entries are replicated iff len(r.log) == r.nextIndex[peer];
 	if len(r.log) == r.nextIndex[peer] {
-		return []*LogEntry{}
+		return []LogEntry{}
 	}
 
 	// so there's something to send iff len(r.log) > r.nextIndex[peer].
-	if len(r.log) > r.nextIndex[peer] {
-		return r.log[r.nextIndex[peer]:]
+	i := r.nextIndex[peer]
+	if len(r.log) > i {
+		n := len(r.log)-i
+		xs := make([]LogEntry, n)
+		if copy(xs, r.log[i:]) != n {
+			panic("TODO")
+		}
+		return xs
 	}
 
 	panic("unreachable")
@@ -498,7 +505,6 @@ func (r *Raft) sendEntriesTo(term, peer int) bool {
 	r.Lock()
 	defer r.Unlock()
 
-	// XXX/TODO we're working on a shallow copy of r.log
 	entries := r.getEntriesFor(peer)
 
 	// messy
@@ -745,6 +751,6 @@ func (r *Raft) AddCmd(cmd any) bool {
 		return false
 	}
 
-	r.log = append(r.log, &LogEntry{r.currentTerm, len(r.log), cmd})
+	r.log = append(r.log, LogEntry{r.currentTerm, len(r.log), cmd})
 	return true
 }
