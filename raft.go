@@ -45,12 +45,14 @@ type Config struct {
 // https://stackoverflow.com/questions/23330024/does-rpc-have-a-timeout-mechanism
 
 type LogEntry struct {
-	Term int
-	Cmd  any
+	Term  int
+	// Needed when sending log entries to other peers.
+	Index int
+	Cmd   any
 }
 
 func (e *LogEntry) String() string {
-	return fmt.Sprintf("[term:%d, cmd:'%s']", e.Term, e.Cmd)
+	return fmt.Sprintf("[term:%d, index:%d, cmd:'%s']", e.Term, e.Index, e.Cmd)
 }
 
 type State int
@@ -726,7 +728,7 @@ func (r *Raft) runSendEntries(term int) {
 // when printing multiple Rafts at once: we want the state
 // of the group)
 func (r *Raft) String() string {
-	return fmt.Sprintf("peer:%d/state:%s/term:%d", r.me, r.state, r.currentTerm)
+	return fmt.Sprintf("[peer:%d, state:%s, term:%d]", r.me, r.state, r.currentTerm)
 }
 
 // Entry point to start storing data in a Raft cluster. The
@@ -739,6 +741,6 @@ func (r *Raft) AddCmd(cmd any) bool {
 		return false
 	}
 
-	r.log = append(r.log, &LogEntry{r.currentTerm, cmd})
+	r.log = append(r.log, &LogEntry{r.currentTerm, len(r.log), cmd})
 	return true
 }

@@ -30,6 +30,21 @@ type RequestVoteReply struct {
 	VoteGranted bool // « true means candidate received vote »
 }
 
+// assumes we're locked
+func (r *Raft) doAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
+	entries := args.Entries
+	for _, entry := range entries {
+		if entry.Index == len(r.log) {
+			r.log = append(r.log, entry)
+
+			continue
+		}
+
+		panic("TODO")
+	}
+	return nil
+}
+
 func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) error {
 	r.Lock()
 	defer r.Unlock()
@@ -56,19 +71,29 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 
 		r.rstElectionTimeout()
 
+		// assume success, for now
 		reply.Term = r.currentTerm
 		reply.Success = true
 
-		return nil
+		return r.doAppendEntries(args, reply)
 	}
 
 	if args.Term == r.currentTerm {
+		switch r.state {
+		case Leader:
+			panic("two leaders for the same term?!")
+		case Candidate:
+			r.toFollower(args.Term)
+		case Follower:
+		}
+
 		r.rstElectionTimeout()
 
+		// assume success, for now
 		reply.Term = r.currentTerm
 		reply.Success = true
 
-		return nil
+		return r.doAppendEntries(args, reply)
 	}
 
 	panic("unreachable")

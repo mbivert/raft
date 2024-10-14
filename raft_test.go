@@ -106,7 +106,7 @@ func TestAddCmd(t *testing.T) {
 		[]any{true},
 	}})
 
-	e := &LogEntry{rs[0].currentTerm, cmd}
+	e := &LogEntry{rs[0].currentTerm, 0, cmd}
 	if len(rs[0].log) != 1 {
 		t.Errorf("Log entry should contain exactly one element, has %d", len(rs[0].log))
 	} else if !reflect.DeepEqual(rs[0].log[0], e) {
@@ -116,11 +116,12 @@ func TestAddCmd(t *testing.T) {
 	rs.kill()
 }
 
-// TODO: return and test relevant r0/r1 state
-func tSendEntries1(r0, r1 *Raft) bool {
+func tSendEntries1(r0, r1 *Raft) (bool, []*LogEntry, []int, []int) {
 	term := r0.lGetTerm()
 
-	return r0.sendEntries1(term, r1.me)
+	ret := r0.sendEntries1(term, r1.me)
+
+	return ret, r1.log, r0.nextIndex, r0.matchIndex
 }
 
 func TestSendEntries1(t *testing.T) {
@@ -154,10 +155,14 @@ func TestSendEntries1(t *testing.T) {
 		},
 		[]any{
 			false,
+			[]*LogEntry{},
+			[]int{0, 0},
+			[]int{0,-1},
 		},
 	}})
 
-	if !r0.AddCmd("first command") {
+	cmd := "first command"
+	if !r0.AddCmd(cmd) {
 		rs.kill()
 		t.Fatalf("Can't add command?!")
 	}
@@ -171,6 +176,9 @@ func TestSendEntries1(t *testing.T) {
 		},
 		[]any{
 			true,
+			[]*LogEntry{r0.log[0]},
+			[]int{0, 1},
+			[]int{0, 0},
 		},
 	}})
 

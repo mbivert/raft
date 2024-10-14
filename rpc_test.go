@@ -31,18 +31,32 @@ func tRequestVote(r *Raft, args *RequestVoteArgs) (*RequestVoteReply, *Raft) {
 	return &reply, r
 }
 
+// TODO: we probably can loop here.
+//
 // heartbeat <=> no log entries
 func TestAppendEntriesHeartbeat(t *testing.T) {
 	r := NewRaft(&Config{
 		Peers:           []string{":0"},
 		ElectionTimeout: [2]int64{150, 300},
 	}, 0, make(chan struct{}), make(chan struct{}), make(chan error), make(chan any))
-	r.currentTerm = 1
-	r.votedFor = 42
+
+	rst := func(state State, currentTerm, votedFor int) {
+		r.state = state
+		r.currentTerm = currentTerm
+		r.votedFor = votedFor
+	}
+
+	rst(Candidate, 1, 42)
 
 	ftests.Run(t, []ftests.Test{
 		{
-			"receiving from lower term",
+			"Resetting peer",
+			rst,
+			[]any{Follower, 1, 42},
+			nil,
+		},
+		{
+			"Follower receiving from lower term",
 			tAppendEntries,
 			[]any{
 				r,
@@ -61,18 +75,74 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 			},
 		},
 		{
-			"receiving from greater term",
+			"Resetting peer",
+			rst,
+			[]any{Candidate, 1, 42},
+			nil,
+		},
+		{
+			"Candidate receiving from lower term",
 			tAppendEntries,
 			[]any{
 				r,
 				&AppendEntriesArgs{
-					Term:     r.currentTerm + 2,
+					Term:     r.currentTerm - 1,
 					LeaderId: -1,
 				},
 			},
 			[]any{
 				&AppendEntriesReply{
-					Term:    r.currentTerm + 2,
+					Term:    r.currentTerm,
+					Success: false,
+				},
+				r,
+				false,
+			},
+		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Leader, 1, 42},
+			nil,
+		},
+		{
+			"Leader receiving from lower term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     r.currentTerm - 1,
+					LeaderId: -1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    r.currentTerm,
+					Success: false,
+				},
+				r,
+				false,
+			},
+		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Follower, 1, 42},
+			nil,
+		},
+		{
+			"Follower receiving from greater term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     3,
+					LeaderId: -1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    3,
 					Success: true,
 				},
 				&Raft{
@@ -81,8 +151,8 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 					me:              r.me,
 					cpeers:          r.cpeers,
 					listener:        r.listener,
-					state:           Follower,          // Candidate → Follower
-					currentTerm:     r.currentTerm + 2, // updated
+					state:           Follower,          // Follower → Follower
+					currentTerm:     3,                 // updated
 					votedFor:        nullVotedFor,      // reset
 					electionTimeout: r.electionTimeout,
 					log:             r.log,
@@ -96,6 +166,219 @@ func TestAppendEntriesHeartbeat(t *testing.T) {
 				true,
 			},
 		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Candidate, 1, 42},
+			nil,
+		},
+		{
+			"Candidate receiving from greater term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     3,
+					LeaderId: -1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    3,
+					Success: true,
+				},
+				&Raft{
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Follower,          // Candidate → Follower
+					currentTerm:     3,                 // updated
+					votedFor:        nullVotedFor,      // reset
+					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					apply:           r.apply,
+					stopped:         r.stopped,
+				},
+				true,
+			},
+		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Leader, 1, 42},
+			nil,
+		},
+		{
+			"Leader receiving from greater term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     3,
+					LeaderId: -1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    3,
+					Success: true,
+				},
+				&Raft{
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Follower,          // Leader → Follower
+					currentTerm:     3,                 // updated
+					votedFor:        nullVotedFor,      // reset
+					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					apply:           r.apply,
+					stopped:         r.stopped,
+				},
+				true,
+			},
+		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Follower, 1, 42},
+			nil,
+		},
+		{
+			"Follower receiving from equal term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     1,
+					LeaderId: 1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    1,
+					Success: true,
+				},
+				&Raft{
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Follower,          // Follower → Follower
+					currentTerm:     1,
+					votedFor:        42,
+					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					apply:           r.apply,
+					stopped:         r.stopped,
+				},
+				true,
+			},
+		},
+		{
+			"Resetting peer",
+			rst,
+			[]any{Candidate, 1, 42},
+			nil,
+		},
+		{
+			"Candidate receiving from equal term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     r.currentTerm,
+					LeaderId: 1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    r.currentTerm,
+					Success: true,
+				},
+				&Raft{
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Follower,          // Candidate → Follower
+					currentTerm:     r.currentTerm,
+					votedFor:        nullVotedFor,      // reset
+					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					apply:           r.apply,
+					stopped:         r.stopped,
+				},
+				true,
+			},
+		},
+		// XXX currently, panics.
+/*
+		{
+			"Resetting peer",
+			rst,
+			[]any{Leader, 1, 42},
+			nil,
+		},
+		{
+			"Leader receiving from equal term",
+			tAppendEntries,
+			[]any{
+				r,
+				&AppendEntriesArgs{
+					Term:     r.currentTerm,
+					LeaderId: 1,
+				},
+			},
+			[]any{
+				&AppendEntriesReply{
+					Term:    r.currentTerm,
+					Success: true,
+				},
+				&Raft{
+					Mutex:           r.Mutex,
+					Config:          r.Config,
+					me:              r.me,
+					cpeers:          r.cpeers,
+					listener:        r.listener,
+					state:           Leader,
+					currentTerm:     r.currentTerm,
+					votedFor:        42,
+					electionTimeout: r.electionTimeout,
+					log:             r.log,
+					commitIndex:     r.commitIndex,
+					lastApplied:     r.lastApplied,
+					nextIndex:       r.nextIndex,
+					matchIndex:      r.matchIndex,
+					apply:           r.apply,
+					stopped:         r.stopped,
+				},
+				true,
+			},
+		},
+*/
 	})
 }
 
