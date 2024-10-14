@@ -53,7 +53,7 @@ func (r *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply)
 
 	// In the process of being shutdown
 	if r.is(Down) {
-		reply.Term = r.currentTerm
+		reply.Term = shutdownTerm
 		reply.Success = false
 
 		return nil

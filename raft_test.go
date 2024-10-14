@@ -116,15 +116,15 @@ func TestAddCmd(t *testing.T) {
 	rs.kill()
 }
 
-func tSendEntries1(r0, r1 *Raft) (bool, []*LogEntry, []int, []int) {
+func tSendEntriesTo(r0, r1 *Raft) (bool, []*LogEntry, []int, []int) {
 	term := r0.lGetTerm()
 
-	ret := r0.sendEntries1(term, r1.me)
+	ret := r0.sendEntriesTo(term, r1.me)
 
 	return ret, r1.log, r0.nextIndex, r0.matchIndex
 }
 
-func TestSendEntries1(t *testing.T) {
+func TestSendEntriesTo(t *testing.T) {
 	rs, _, err := NewRafts(&Config{
 		Peers:           []string{":6767", ":6868"},
 		ElectionTimeout: [2]int64{150, 300},
@@ -148,13 +148,13 @@ func TestSendEntries1(t *testing.T) {
 
 	ftests.Run(t, []ftests.Test{{
 		"no command to send",
-		tSendEntries1,
+		tSendEntriesTo,
 		[]any{
 			r0,
 			r1,
 		},
 		[]any{
-			false,
+			true,
 			[]*LogEntry{},
 			[]int{0, 0},
 			[]int{0,-1},
@@ -169,7 +169,7 @@ func TestSendEntries1(t *testing.T) {
 
 	ftests.Run(t, []ftests.Test{{
 		"one command correctly sent",
-		tSendEntries1,
+		tSendEntriesTo,
 		[]any{
 			r0,
 			r1,

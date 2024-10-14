@@ -31,7 +31,6 @@ type Config struct {
 	Peers           []string      // ip:port
 	HeartbeatTick   time.Duration // sending heartbeats periodically
 	ElectionTick    time.Duration // check for election timeout periodically
-	SendEntriesTick time.Duration // try sending entries periodically
 	ApplyTick       time.Duration // try applying committed entries periodically
 	RPCTimeout      time.Duration // RPC can't last more than
 	ElectionTimeout [2]int64      // election timeout choosen between those (ms)
@@ -66,6 +65,7 @@ const (
 )
 
 const nullVotedFor = -1
+const shutdownTerm = -1
 
 var lgr *slog.Logger
 
@@ -192,7 +192,7 @@ func NewRaft(c *Config, me int, setup,
 		<-start
 
 		go r.runElectionTimer()
-		go r.runApplyTimer()
+		// go r.runApplyTimer()
 	}()
 
 	r.lDebug(lgr, "NewRaft")
@@ -236,7 +236,7 @@ func (r *Raft) unkill() error {
 	}
 
 	go r.runElectionTimer()
-	go r.runApplyTimer()
+	// go r.runApplyTimer()
 
 	return nil
 }
@@ -471,6 +471,89 @@ func (r *Raft) rstElectionTimeout() int64 {
 	return d
 }
 
+func (r *Raft) lGetEntriesFor(peer int) []*LogEntry {
+	r.Lock()
+	defer r.Unlock()
+
+	// This should never happen (well, perhaps it'll happen at some
+	// point when we get out of sync? for now at least, consider it
+	// a fatal error)
+	if len(r.log) < r.nextIndex[peer] {
+		panic("assert")
+	}
+
+	// all entries are replicated iff len(r.log) == r.nextIndex[peer];
+	if len(r.log) == r.nextIndex[peer] {
+		return []*LogEntry{}
+	}
+
+	// so there's something to send iff len(r.log) > r.nextIndex[peer].
+	if len(r.log) > r.nextIndex[peer] {
+		return r.log[r.nextIndex[peer]:]
+	}
+
+	panic("unreachable")
+}
+
+// returns true iff a request was successfully sent and processed
+// to/by the remote peer.
+func (r *Raft) sendEntriesTo(term, peer int) bool {
+	entries := r.lGetEntriesFor(peer)
+
+	reply, err := r.callAppendEntries(term, peer, entries)
+
+	// peer unreacheable atm (most likely)
+	if err != nil {
+		r.lDebug(lgr, "sendEntries: "+err.Error(),
+			"to", peer, "rport", r.Peers[peer], "lterm", term)
+		return false
+	}
+
+	if reply.Success {
+		r.Lock()
+		r.nextIndex[peer] = len(r.log)
+		r.matchIndex[peer] = len(r.log) - 1
+		r.Unlock()
+		return true
+	}
+
+	if !reply.Success {
+		if reply.Term == shutdownTerm {
+			return false
+		}
+
+		if reply.Term > term {
+			r.Lock()
+			r.toFollower(reply.Term)
+			r.Unlock()
+			return false
+		}
+
+		// This shouldn't happen. Not really a fatal issue,
+		// but it means something is poorly wired somewhere.
+		if reply.Term < term {
+			panic("assert")
+		}
+
+		if reply.Term == term {
+			r.Lock()
+			r.nextIndex[peer]--
+
+			// Again, something is poorly wired somewhere
+			if r.nextIndex[peer] < 0 {
+				r.Unlock()
+				panic("assert")
+			}
+			r.Unlock()
+
+			// We'll naturally retry next time around.
+			return false
+		}
+	}
+
+	panic("unreachable")
+}
+
 func (r *Raft) runSendHeartbeats(term int) {
 	// I guess it's better to have a waitgroup collecting pending
 	// goroutines?
@@ -486,10 +569,7 @@ func (r *Raft) runSendHeartbeats(term int) {
 				defer wg.Done()
 				r.lDebug(lgr, "runSendHeartbeats",
 					"to", peer, "rport", r.Peers[peer])
-
-				r.callAppendEntries(term, peer, []*LogEntry{})
-				// TODO: in case of failure and when reply.Term > term,
-				// we should give up?
+				r.sendEntriesTo(term, peer)
 			}()
 			return nil
 		})
@@ -639,88 +719,6 @@ func (r *Raft) runApplyTimer() {
 		r.Unlock()
 
 		time.Sleep(r.ApplyTick)
-	}
-}
-
-// TODO: try merging sendEntries1() with runSendHeartbeats(): the
-// network is less stable since we introduced sendEntries1()
-func (r *Raft) sendEntries1(term, peer int) bool {
-	r.Lock()
-	defer r.Unlock()
-
-	// This should never happen (well, perhaps it'll happen at some
-	// point when we get out of sync? for now at least, consider it
-	// a fatal error)
-	if len(r.log) < r.nextIndex[peer] {
-		panic("assert")
-	}
-
-	// all entries are replicated iff len(r.log) == r.nextIndex[peer];
-	if len(r.log) == r.nextIndex[peer] {
-		return false
-	}
-
-	// so there's something to send iff len(r.log) > r.nextIndex[peer].
-	if len(r.log) > r.nextIndex[peer] {
-		entries := r.log[r.nextIndex[peer]:]
-
-		// XXX unclear: we need to lock at some point in callAppendEntries
-		// XXX there's probably a race, as entries contain a shallow copy of r.log
-		r.Unlock()
-		reply, err := r.callAppendEntries(term, peer, entries)
-		r.Lock()
-
-		// peer unreacheable atm (most likely)
-		if err != nil {
-			r.Debug(lgr, "sendEntries1: "+err.Error(),
-				"to", peer, "rport", r.Peers[peer], "lterm", term)
-			return false
-		}
-
-		if reply.Success {
-			r.nextIndex[peer] = len(r.log)
-			r.matchIndex[peer] = len(r.log) - 1
-			return true
-		}
-
-		if !reply.Success {
-			if reply.Term > term {
-				r.toFollower(reply.Term)
-				return false
-			}
-
-			// This shouldn't happen. Not really a fatal issue,
-			// but it means something is poorly wired somewhere.
-			if reply.Term < term {
-				panic("assert")
-			}
-
-			if reply.Term == term {
-				r.nextIndex[peer]--
-
-				// Again, something is poorly wired somewhere
-				if r.nextIndex[peer] < 0 {
-					panic("assert")
-				}
-
-				// a goto wouldn't release the lock; not such
-				// a bad idea to eventually give room for someone
-				// else to move forward.
-				return r.sendEntries1(term, peer)
-			}
-		}
-	}
-
-	panic("unreachable")
-}
-
-func (r *Raft) runSendEntries(term int) {
-	for !r.shouldStop() && r.lAt(term) {
-		r.forEachPeer(func(peer int) error {
-			r.sendEntries1(term, peer)
-			return nil
-		})
-		time.Sleep(r.SendEntriesTick)
 	}
 }
 
