@@ -400,7 +400,6 @@ func (r *Raft) toLeader(term int) {
 	r.initIndexes()
 
 	go r.runSendHeartbeats(term)
-	// go r.runSendEntries(term)
 }
 
 // on the leader, (re-)initialize r.initIndex and r.matchIndex
@@ -471,10 +470,8 @@ func (r *Raft) rstElectionTimeout() int64 {
 	return d
 }
 
-func (r *Raft) lGetEntriesFor(peer int) []*LogEntry {
-	r.Lock()
-	defer r.Unlock()
-
+// assumes we're locked
+func (r *Raft) getEntriesFor(peer int) []*LogEntry {
 	// This should never happen (well, perhaps it'll happen at some
 	// point when we get out of sync? for now at least, consider it
 	// a fatal error)
@@ -498,34 +495,46 @@ func (r *Raft) lGetEntriesFor(peer int) []*LogEntry {
 // returns true iff a request was successfully sent and processed
 // to/by the remote peer.
 func (r *Raft) sendEntriesTo(term, peer int) bool {
-	entries := r.lGetEntriesFor(peer)
+	r.Lock()
+	defer r.Unlock()
 
+	// XXX/TODO we're working on a shallow copy of r.log
+	entries := r.getEntriesFor(peer)
+
+	// messy
+	r.Unlock()
 	reply, err := r.callAppendEntries(term, peer, entries)
+	r.Lock()
 
 	// peer unreacheable atm (most likely)
 	if err != nil {
-		r.lDebug(lgr, "sendEntries: "+err.Error(),
+		r.Debug(lgr, "sendEntries: "+err.Error(),
 			"to", peer, "rport", r.Peers[peer], "lterm", term)
 		return false
 	}
 
+	// Don't mess up the state if we've shifted to another
+	// term already
+	//
+	// TODO/XXX: subtle and untested
+	if !r.at(term) {
+		return false
+	}
+
 	if reply.Success {
-		r.Lock()
 		r.nextIndex[peer] = len(r.log)
 		r.matchIndex[peer] = len(r.log) - 1
-		r.Unlock()
 		return true
 	}
 
 	if !reply.Success {
+		// peer is in the process of shuting itself down.
 		if reply.Term == shutdownTerm {
 			return false
 		}
 
 		if reply.Term > term {
-			r.Lock()
 			r.toFollower(reply.Term)
-			r.Unlock()
 			return false
 		}
 
@@ -536,15 +545,12 @@ func (r *Raft) sendEntriesTo(term, peer int) bool {
 		}
 
 		if reply.Term == term {
-			r.Lock()
 			r.nextIndex[peer]--
 
 			// Again, something is poorly wired somewhere
 			if r.nextIndex[peer] < 0 {
-				r.Unlock()
 				panic("assert")
 			}
-			r.Unlock()
 
 			// We'll naturally retry next time around.
 			return false
